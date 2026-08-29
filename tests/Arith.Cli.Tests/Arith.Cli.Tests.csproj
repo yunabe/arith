@@ -1,0 +1,9 @@
+<Project Sdk="MSTest.Sdk/4.3.3">
+  <PropertyGroup>
+    <RootNamespace>Arith.Cli.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Arith.Cli/Arith.Cli.csproj" />
+  </ItemGroup>
+</Project>

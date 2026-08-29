@@ -1,0 +1,17 @@
+# .NET build output
+bin/
+obj/
+artifacts/
+
+# IDE and editor state
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+
+# Test output
+TestResults/
+
+# Operating system files
+.DS_Store

@@ -7,7 +7,7 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The language specification is currently in place, but the compiler has not been implemented yet.
+> The CLI skeleton is implemented. The compiler itself has not been implemented yet.
 
 ## Example
 
@@ -59,9 +59,36 @@ large:
 
 See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) for the complete syntax and semantics.
 
-## Planned commands
+## Requirements
 
-The compiler is expected to provide the following command-line interface:
+- .NET 10 SDK
+
+.NET 10 is a Long Term Support (LTS) release. The repository's `global.json` accepts SDK 10.0.100 or any later .NET 10 feature band installed on the machine.
+
+## Build and test
+
+```console
+dotnet build Arith.slnx
+dotnet test --solution Arith.slnx
+```
+
+## CLI
+
+The first supported command prints the CLI version:
+
+```console
+dotnet run --project src/Arith.Cli -- version
+```
+
+```text
+arith 0.1.0
+```
+
+The `--` separator ensures that `version` is passed to Arith rather than interpreted by the .NET CLI.
+
+## Planned compiler commands
+
+The compiler is expected to eventually provide commands such as:
 
 ```console
 arith build hello.arith

@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Arith.Cli/Arith.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Arith.Cli.Tests/Arith.Cli.Tests.csproj" />
+  </Folder>
+</Solution>
