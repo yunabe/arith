@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- Central Package Management: all NuGet package versions live here. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="System.CommandLine" Version="2.0.11" />
+  </ItemGroup>
+
+  <!-- Test-only packages -->
+  <ItemGroup>
+    <PackageVersion Include="xunit.v3" Version="4.0.0" />
+  </ItemGroup>
+
+</Project>

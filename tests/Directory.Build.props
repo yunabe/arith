@@ -1,0 +1,10 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove(Directory.Build.props, $(MSBuildThisFileDirectory)..))" />
+
+  <!-- Test projects follow the Method_Scenario_Expectation naming convention. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>

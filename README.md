@@ -97,6 +97,23 @@ typed syntax tree
 
 The initial implementation will keep these stages separate and report errors with their source locations.
 
+## Development
+
+Building the compiler requires the .NET 10 SDK.
+
+```console
+dotnet build                                   # build all projects
+dotnet test                                    # run the test suite
+dotnet run --project src/Arith.Cli -- version  # run the CLI
+```
+
+The repository is laid out as follows:
+
+- `src/Arith.Cli` — the `arith` command-line tool (currently supports only `arith version`)
+- `tests/Arith.Cli.Tests` — xUnit v3 tests
+- `Directory.Build.props` / `Directory.Packages.props` — shared build settings and centrally managed NuGet package versions
+- Build outputs are written to `artifacts/`
+
 ## Roadmap
 
 1. Tokens and lexer
