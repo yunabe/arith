@@ -111,8 +111,9 @@ and how the JIT counts the hidden `this` argument.
 
 ## 4. Method bodies and IL
 
-IL is a stack machine: instructions push and pop an evaluation stack, and calls pop
-their arguments left-to-right (so you push them in source order). Each method body
+IL is a stack machine: instructions push and pop an evaluation stack. Arguments
+are pushed in source order (so the last argument sits on top of the stack) and the
+call instruction consumes them all. Each method body
 in the IL stream is a small header (max stack, code size, locals-signature token)
 followed by raw instruction bytes; `MethodBodyStreamEncoder.AddMethodBody` writes
 the header and returns the body's offset, which the MethodDef row records.
