@@ -292,7 +292,12 @@ internal static class FibCommandEmitter
         il.OpCode(ILOpCode.Add);
         il.OpCode(ILOpCode.Ret);
 
-        return bodyStream.AddMethodBody(il, maxStack: 2);
+        // The stack peaks at 3 while preparing the second recursive call:
+        // [Fib(n - 1), n, 2]. Note that this body is small enough to get the
+        // "tiny" header format, which does not record maxStack (it implies 8),
+        // so an understated value would only fail once the body grows a fat
+        // header — state the true depth so the code is a correct example.
+        return bodyStream.AddMethodBody(il, maxStack: 3);
     }
 
     /// <summary>static int Main(string[] args) — parse, print, and call Fib.</summary>

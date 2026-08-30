@@ -9,6 +9,40 @@ assemblies — so everything below maps 1:1 to API calls in
 The authoritative reference is ECMA-335 (Common Language Infrastructure), especially
 partition II (metadata) and partition III (IL instructions).
 
+## Quickstart
+
+Requires the .NET 10 SDK (the emitted program targets the .NET 10 runtime).
+
+```console
+$ dotnet run --project src/Arith.Cli -- experiment build-fib-command out
+$ dotnet out/fib.dll 10
+fib(10) = 89
+$ out/fib 10      # same thing, via the launcher script
+fib(10) = 89
+```
+
+Four files are written into the output directory (created if missing):
+
+| File | Role |
+| --- | --- |
+| `fib.dll` | The hand-emitted assembly containing all logic |
+| `fib.runtimeconfig.json` | Tells the `dotnet` host to load the .NET 10 shared framework |
+| `fib` | POSIX shell launcher (marked executable) wrapping `dotnet fib.dll` |
+| `fib.cmd` | The equivalent Windows launcher |
+
+Behavior of the emitted program:
+
+- `fib(0) = fib(1) = 1` and `fib(n) = fib(n - 1) + fib(n - 2)`, hence `fib(10) = 89`.
+- Negative inputs fall into the `n < 2` base case and return 1.
+- The recursion is intentionally naive, so the cost grows exponentially; inputs
+  around 40 and above take noticeably long.
+- Anything but exactly one integer argument prints `usage: fib <n>` to stderr and
+  exits with code 1.
+
+Note the scope: this experiment emits one fixed, hard-coded program to demonstrate
+IL generation. It does not read Arith source code — compiling `.arith` files is the
+job of the future `arith build`, which will generalize the techniques shown here.
+
 ## 1. What a .NET assembly file is
 
 `fib.dll` is a PE (Portable Executable) file, the same container format as native
@@ -112,8 +146,17 @@ Other instructions used by `Main`: `ldlen`/`ldelem.ref` (array access), `ldloc`/
 heap string), and `callvirt` for the virtual `TextWriter.WriteLine`.
 
 The `maxStack` value in the body header is a promise to the JIT about the deepest
-evaluation stack; both bodies here peak at 2. Get it wrong (too small) and the
-runtime rejects the method as invalid.
+evaluation stack. `Fib` peaks at **3** — after the first recursive call its result
+stays on the stack while `n` and `2` are pushed for the second one
+(`[Fib(n - 1), n, 2]`) — and `Main` peaks at 2. Get it wrong (too small) and the
+runtime rejects the method with `InvalidProgramException`.
+
+A trap worth knowing: a body under 64 bytes with no locals and `maxStack <= 8`
+is written in the *tiny* header format, which does not record `maxStack` at all
+(the runtime assumes 8). `Fib` qualifies, so an understated value would be
+silently masked there today and only blow up once the body grows a *fat* header —
+for example after adding a few instructions. A code generator should therefore
+always compute the true depth rather than relying on what happens to run.
 
 ## 5. Putting it together
 

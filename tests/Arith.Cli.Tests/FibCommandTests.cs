@@ -40,6 +40,7 @@ public class FibCommandTests : IClassFixture<FibProgramFixture>
     }
 
     [Theory]
+    [InlineData("-1", 1L)]
     [InlineData("0", 1L)]
     [InlineData("1", 1L)]
     [InlineData("2", 2L)]
