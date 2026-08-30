@@ -7,7 +7,7 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The language specification is currently in place, but the compiler has not been implemented yet.
+> The language specification and the CLI skeleton are in place, but the compiler itself has not been implemented yet.
 
 ## Example
 
@@ -105,6 +105,12 @@ Building the compiler requires the .NET 10 SDK.
 dotnet build                                   # build all projects
 dotnet test                                    # run the test suite
 dotnet run --project src/Arith.Cli -- version  # run the CLI
+```
+
+The `version` command prints the CLI version:
+
+```text
+0.1.0
 ```
 
 The repository is laid out as follows:
