@@ -76,25 +76,13 @@ public class FibCommandTests : IClassFixture<FibProgramFixture>
 
     private ProcessResult RunFib(params string[] args)
     {
-        ProcessStartInfo startInfo = new("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
+        ProcessStartInfo startInfo = new("dotnet");
         startInfo.ArgumentList.Add(Path.Combine(_fixture.OutputDirectory, "fib.dll"));
         foreach (string arg in args)
         {
             startInfo.ArgumentList.Add(arg);
         }
 
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start the dotnet host.");
-        string output = process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        return new ProcessResult(process.ExitCode, output, error);
+        return ProcessRunner.Run(startInfo);
     }
-
-    private sealed record ProcessResult(int ExitCode, string Output, string Error);
 }

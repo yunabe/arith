@@ -101,18 +101,13 @@ internal static class NativeAotPublisher
         startInfo.ArgumentList.Add(publishDirectory);
         startInfo.ArgumentList.Add("--nologo");
 
-        using Process process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to start dotnet publish.");
-        string output = process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        if (process.ExitCode != 0)
+        ProcessResult result = ProcessRunner.Run(startInfo);
+        if (result.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"dotnet publish failed with exit code {process.ExitCode}. " +
+                $"dotnet publish failed with exit code {result.ExitCode}. " +
                 $"A working native toolchain (e.g. Xcode Command Line Tools on macOS) is required.\n" +
-                $"{output}\n{error}");
+                $"{result.Output}\n{result.Error}");
         }
     }
 }

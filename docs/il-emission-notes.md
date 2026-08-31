@@ -44,7 +44,7 @@ IL generation. It does not read Arith source code — compiling `.arith` files i
 job of the future `arith build`, which will generalize the techniques shown here.
 
 With `--aot`, the same IL is additionally compiled ahead-of-time into a single
-native executable that runs without the `dotnet` host (see section 7):
+native executable that runs without the `dotnet` host (see section 6):
 
 ```console
 $ dotnet run --project src/Arith.Cli -- experiment build-fib-command out --aot
@@ -205,20 +205,57 @@ Requirements: the platform's native linker (Xcode Command Line Tools on macOS,
 clang/binutils on Linux), and the first run downloads the ILCompiler packages.
 Cross-compilation is not supported — the executable targets the host OS/arch.
 
-What AOT buys for a program like this is **startup, not throughput** (measured on
-an Apple-silicon Mac, average of 10 runs):
+What AOT mainly buys for a short-lived program like this is elapsed time, most
+of it startup-related. **End-to-end process wall times** (not isolated compute):
 
 | Run | `dotnet fib.dll` (JIT) | native `fib` (AOT) |
 | --- | --- | --- |
-| `fib 1` (≈ startup only) | 22.9 ms | 3.1 ms |
-| `fib 35` | 44.9 ms | 23.2 ms |
-| `fib 40` | 262.6 ms | 223.0 ms |
+| `fib 1` | 23.1 ms (22.2–24.3) | 2.9 ms (2.8–3.1) |
+| `fib 35` | 46.7 ms (44.3–48.2) | 23.1 ms (21.7–26.9) |
+| `fib 40` | 275.8 ms (268.9–282.2) | 224.6 ms (215.8–249.6) |
 
-Subtracting startup, the pure compute time is nearly identical (`fib 40`:
-~240 ms JIT vs ~217 ms AOT): once RyuJIT has compiled `Fib`, both run native
-code, so the JIT path only pays its ~20 ms of host startup + runtime
-initialization + JIT compilation once. The ~3 ms native startup is what makes
-AOT attractive for short-lived CLI tools like this one.
+The `fib 1` row approximates each variant's fixed per-process overhead — for the
+JIT path that includes host startup, runtime initialization, and JIT compilation;
+both variants also pay argument parsing, output, and shutdown — so it is not a
+direct measurement of "time to reach `Main`". Subtracting it from the larger runs
+gives only an *estimate* of the incremental cost of the recursion across separate
+processes, not a measurement of warmed-up throughput; by that estimate `fib 40`
+still favors AOT by roughly 20 ms (~8%), and JIT- and ILC-generated code are not
+necessarily identical (tiered compilation and NativeAOT's whole-program
+optimization make different tradeoffs). The safe reading: AOT substantially
+reduces the short-lived command's elapsed time, and the small-input row shows a
+large startup-related benefit; these numbers do not isolate steady-state
+throughput.
+
+Measured on an Apple M4 (macOS 26.6.2), .NET SDK 10.0.400 / runtime 10.0.11,
+Release outputs, no `DOTNET_*` environment overrides, stdout redirected to
+`/dev/null`, two discarded warmup runs then 10 measured processes per cell
+(table shows mean and min–max), using this zsh function:
+
+```sh
+zmodload zsh/datetime
+bench() {
+  local label=$1; shift
+  "$@" > /dev/null; "$@" > /dev/null    # 2 warmup runs, discarded
+  local min=999999.0 max=0 sum=0
+  for i in {1..10}; do
+    local t0=$EPOCHREALTIME
+    "$@" > /dev/null
+    local ms=$(( (EPOCHREALTIME - t0) * 1000 ))
+    sum=$(( sum + ms )); (( ms < min )) && min=$ms; (( ms > max )) && max=$ms
+  done
+  printf "%-12s avg %6.1f ms  (min %6.1f / max %6.1f)\n" $label $(( sum / 10.0 )) $min $max
+}
+bench "JIT fib 35" dotnet out-jit/fib.dll 35
+bench "AOT fib 35" out-aot/fib 35
+```
+
+The end-to-end test for this mode is marked explicit (it needs a native linker
+and takes seconds); run it with:
+
+```console
+dotnet test --project tests/Arith.Cli.Tests -- --explicit on
+```
 
 ## 7. Inspecting the output
 
