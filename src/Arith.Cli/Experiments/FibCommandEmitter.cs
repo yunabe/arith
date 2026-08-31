@@ -92,6 +92,14 @@ internal static class FibCommandEmitter
         return written;
     }
 
+    /// <summary>
+    /// Compiles the same program ahead-of-time into a single native executable via
+    /// <see cref="NativeAotPublisher"/> and returns its path. The IL emitted by
+    /// <see cref="BuildAssembly"/> is the input; ILC and the platform linker do the rest.
+    /// </summary>
+    internal static string EmitNativeExecutable(string outputDirectory, TextWriter log) =>
+        NativeAotPublisher.Publish(BuildAssembly(), "fib", outputDirectory, log);
+
     /// <summary>Builds the bytes of fib.dll: a PE file wrapping metadata tables and IL.</summary>
     private static byte[] BuildAssembly()
     {

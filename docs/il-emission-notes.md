@@ -43,6 +43,15 @@ Note the scope: this experiment emits one fixed, hard-coded program to demonstra
 IL generation. It does not read Arith source code — compiling `.arith` files is the
 job of the future `arith build`, which will generalize the techniques shown here.
 
+With `--aot`, the same IL is additionally compiled ahead-of-time into a single
+native executable that runs without the `dotnet` host (see section 6):
+
+```console
+$ dotnet run --project src/Arith.Cli -- experiment build-fib-command out --aot
+$ out/fib 10
+fib(10) = 89
+```
+
 ## 1. What a .NET assembly file is
 
 `fib.dll` is a PE (Portable Executable) file, the same container format as native
@@ -167,7 +176,88 @@ result runs with `dotnet fib.dll` plus a `fib.runtimeconfig.json` that names the
 shared framework (`Microsoft.NETCore.App` 10.0.0) — the same file layout
 `arith build` is planned to produce.
 
-## 6. Inspecting the output
+## 6. NativeAOT mode (`--aot`)
+
+`--aot` feeds the exact same hand-emitted IL to the official NativeAOT toolchain
+and drops a single native executable (~1 MB, no `dotnet` host needed) into the
+output directory. Nothing about the IL changes — this demonstrates that ILC, like
+the JIT, consumes plain ECMA-335 input and does not care who produced it.
+
+Under the hood NativeAOT is two steps:
+
+1. **ILC** (`ilc`, from the `runtime.<rid>.Microsoft.DotNet.ILCompiler` NuGet
+   package) compiles the IL assembly plus the NativeAOT runtime-pack assemblies
+   into one object file, doing whole-program analysis and tree-shaking.
+2. The **platform linker** (clang on macOS/Linux) links that object file with the
+   runtime's static libraries (GC, `libSystem.Native`, ...) into the executable.
+
+`NativeAotPublisher` deliberately does not invoke `ilc` and the linker itself:
+the linker arguments live in the SDK's `Microsoft.NETCore.Native.*.targets` and
+are heavily platform- and version-specific. Instead it generates a throwaway
+MSBuild project whose `CoreCompile` target — the step that normally runs the C#
+compiler — is overridden to just copy the IL assembly emitted by
+`FibCommandEmitter` into place, then runs `dotnet publish` with `PublishAot=true`.
+The official pipeline drives ILC and the link; the C# compiler never runs. (The
+one MSBuild subtlety: `Sdk.targets` must be imported explicitly *before* the
+overriding target, because the last definition of a target wins.)
+
+Requirements: the platform's native linker (Xcode Command Line Tools on macOS,
+clang/binutils on Linux), and the first run downloads the ILCompiler packages.
+Cross-compilation is not supported — the executable targets the host OS/arch.
+
+What AOT mainly buys for a short-lived program like this is elapsed time, most
+of it startup-related. **End-to-end process wall times** (not isolated compute):
+
+| Run | `dotnet fib.dll` (JIT) | native `fib` (AOT) |
+| --- | --- | --- |
+| `fib 1` | 23.1 ms (22.2–24.3) | 2.9 ms (2.8–3.1) |
+| `fib 35` | 46.7 ms (44.3–48.2) | 23.1 ms (21.7–26.9) |
+| `fib 40` | 275.8 ms (268.9–282.2) | 224.6 ms (215.8–249.6) |
+
+The `fib 1` row approximates each variant's fixed per-process overhead — for the
+JIT path that includes host startup, runtime initialization, and JIT compilation;
+both variants also pay argument parsing, output, and shutdown — so it is not a
+direct measurement of "time to reach `Main`". Subtracting it from the larger runs
+gives only an *estimate* of the incremental cost of the recursion across separate
+processes, not a measurement of warmed-up throughput; by that estimate `fib 40`
+still favors AOT by roughly 31 ms (~12%), and JIT- and ILC-generated code are not
+necessarily identical (tiered compilation and NativeAOT's whole-program
+optimization make different tradeoffs). The safe reading: AOT substantially
+reduces the short-lived command's elapsed time, and the small-input row shows a
+large startup-related benefit; these numbers do not isolate steady-state
+throughput.
+
+Measured on an Apple M4 (macOS 26.6.2), .NET SDK 10.0.400 / runtime 10.0.11,
+Release outputs, no `DOTNET_*` environment overrides, stdout redirected to
+`/dev/null`, two discarded warmup runs then 10 measured processes per cell
+(table shows mean and min–max), using this zsh function:
+
+```sh
+zmodload zsh/datetime
+bench() {
+  local label=$1; shift
+  "$@" > /dev/null; "$@" > /dev/null    # 2 warmup runs, discarded
+  local min=999999.0 max=0 sum=0
+  for i in {1..10}; do
+    local t0=$EPOCHREALTIME
+    "$@" > /dev/null
+    local ms=$(( (EPOCHREALTIME - t0) * 1000 ))
+    sum=$(( sum + ms )); (( ms < min )) && min=$ms; (( ms > max )) && max=$ms
+  done
+  printf "%-12s avg %6.1f ms  (min %6.1f / max %6.1f)\n" $label $(( sum / 10.0 )) $min $max
+}
+bench "JIT fib 35" dotnet out-jit/fib.dll 35
+bench "AOT fib 35" out-aot/fib 35
+```
+
+The end-to-end test for this mode is marked explicit (it needs a native linker
+and takes seconds); run it with:
+
+```console
+dotnet test --project tests/Arith.Cli.Tests -- --explicit on
+```
+
+## 7. Inspecting the output
 
 Useful tools to look at the generated file:
 
