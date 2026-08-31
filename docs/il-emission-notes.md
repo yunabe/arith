@@ -220,7 +220,7 @@ both variants also pay argument parsing, output, and shutdown — so it is not a
 direct measurement of "time to reach `Main`". Subtracting it from the larger runs
 gives only an *estimate* of the incremental cost of the recursion across separate
 processes, not a measurement of warmed-up throughput; by that estimate `fib 40`
-still favors AOT by roughly 20 ms (~8%), and JIT- and ILC-generated code are not
+still favors AOT by roughly 31 ms (~12%), and JIT- and ILC-generated code are not
 necessarily identical (tiered compilation and NativeAOT's whole-program
 optimization make different tradeoffs). The safe reading: AOT substantially
 reduces the short-lived command's elapsed time, and the small-input row shows a
