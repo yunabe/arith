@@ -205,6 +205,21 @@ Requirements: the platform's native linker (Xcode Command Line Tools on macOS,
 clang/binutils on Linux), and the first run downloads the ILCompiler packages.
 Cross-compilation is not supported — the executable targets the host OS/arch.
 
+What AOT buys for a program like this is **startup, not throughput** (measured on
+an Apple-silicon Mac, average of 10 runs):
+
+| Run | `dotnet fib.dll` (JIT) | native `fib` (AOT) |
+| --- | --- | --- |
+| `fib 1` (≈ startup only) | 22.9 ms | 3.1 ms |
+| `fib 35` | 44.9 ms | 23.2 ms |
+| `fib 40` | 262.6 ms | 223.0 ms |
+
+Subtracting startup, the pure compute time is nearly identical (`fib 40`:
+~240 ms JIT vs ~217 ms AOT): once RyuJIT has compiled `Fib`, both run native
+code, so the JIT path only pays its ~20 ms of host startup + runtime
+initialization + JIT compilation once. The ~3 ms native startup is what makes
+AOT attractive for short-lived CLI tools like this one.
+
 ## 7. Inspecting the output
 
 Useful tools to look at the generated file:
