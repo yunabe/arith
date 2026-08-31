@@ -115,7 +115,7 @@ The `version` command prints the CLI version:
 
 The repository is laid out as follows:
 
-- `src/Arith.Cli` — the `arith` command-line tool (currently `arith version` and `arith experiment build-fib-command`, a code-generation dry run that emits a demo `fib` program as raw IL and metadata; see [docs/il-emission-notes.md](docs/il-emission-notes.md))
+- `src/Arith.Cli` — the `arith` command-line tool (currently `arith version` and `arith experiment build-fib-command`, a code-generation dry run that emits a demo `fib` program as raw IL and metadata, optionally NativeAOT-compiled with `--aot`; see [docs/il-emission-notes.md](docs/il-emission-notes.md))
 - `tests/Arith.Cli.Tests` — xUnit v3 tests
 - `Directory.Build.props` / `Directory.Packages.props` — shared build settings and centrally managed NuGet package versions
 - Build outputs are written to `artifacts/`

@@ -43,6 +43,15 @@ Note the scope: this experiment emits one fixed, hard-coded program to demonstra
 IL generation. It does not read Arith source code — compiling `.arith` files is the
 job of the future `arith build`, which will generalize the techniques shown here.
 
+With `--aot`, the same IL is additionally compiled ahead-of-time into a single
+native executable that runs without the `dotnet` host (see section 7):
+
+```console
+$ dotnet run --project src/Arith.Cli -- experiment build-fib-command out --aot
+$ out/fib 10
+fib(10) = 89
+```
+
 ## 1. What a .NET assembly file is
 
 `fib.dll` is a PE (Portable Executable) file, the same container format as native
@@ -167,7 +176,36 @@ result runs with `dotnet fib.dll` plus a `fib.runtimeconfig.json` that names the
 shared framework (`Microsoft.NETCore.App` 10.0.0) — the same file layout
 `arith build` is planned to produce.
 
-## 6. Inspecting the output
+## 6. NativeAOT mode (`--aot`)
+
+`--aot` feeds the exact same hand-emitted IL to the official NativeAOT toolchain
+and drops a single native executable (~1 MB, no `dotnet` host needed) into the
+output directory. Nothing about the IL changes — this demonstrates that ILC, like
+the JIT, consumes plain ECMA-335 input and does not care who produced it.
+
+Under the hood NativeAOT is two steps:
+
+1. **ILC** (`ilc`, from the `runtime.<rid>.Microsoft.DotNet.ILCompiler` NuGet
+   package) compiles the IL assembly plus the NativeAOT runtime-pack assemblies
+   into one object file, doing whole-program analysis and tree-shaking.
+2. The **platform linker** (clang on macOS/Linux) links that object file with the
+   runtime's static libraries (GC, `libSystem.Native`, ...) into the executable.
+
+`NativeAotPublisher` deliberately does not invoke `ilc` and the linker itself:
+the linker arguments live in the SDK's `Microsoft.NETCore.Native.*.targets` and
+are heavily platform- and version-specific. Instead it generates a throwaway
+MSBuild project whose `CoreCompile` target — the step that normally runs the C#
+compiler — is overridden to just copy the IL assembly emitted by
+`FibCommandEmitter` into place, then runs `dotnet publish` with `PublishAot=true`.
+The official pipeline drives ILC and the link; the C# compiler never runs. (The
+one MSBuild subtlety: `Sdk.targets` must be imported explicitly *before* the
+overriding target, because the last definition of a target wins.)
+
+Requirements: the platform's native linker (Xcode Command Line Tools on macOS,
+clang/binutils on Linux), and the first run downloads the ILCompiler packages.
+Cross-compilation is not supported — the executable targets the host OS/arch.
+
+## 7. Inspecting the output
 
 Useful tools to look at the generated file:
 
