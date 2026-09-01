@@ -1,0 +1,297 @@
+# Arith compiler design (v0.1)
+
+This document describes the planned architecture of the Arith compiler: how the
+code is organized into projects, what the pipeline stages are, which data
+structures flow between them, and in what order the pieces should be built.
+[LANGUAGE_SPEC.md](../LANGUAGE_SPEC.md) defines *what* to compile; this document
+defines *how*. The IL-emission techniques it builds on are described in
+[il-emission-notes.md](il-emission-notes.md).
+
+## 1. Goals and constraints
+
+- Compile Arith v0.1 source files to .NET assemblies (`arith build`) and run
+  them (`arith run`), matching the CLI sketched in the README.
+- Keep the classic stages — lexing, parsing, name resolution / type checking,
+  IL generation — as separate, individually testable components.
+- Report errors with source locations, and keep the door open for reporting
+  *multiple* errors per run, even if early versions stop at the first one.
+- No external parser generators or compiler frameworks: a hand-written lexer
+  and recursive-descent parser, and `System.Reflection.Metadata` for output,
+  as already prototyped by `FibCommandEmitter`.
+
+## 2. Project layout
+
+The compiler core becomes a class library, separate from the CLI:
+
+```text
+src/
+  Arith.Compiler/            new: the compiler as a library (no CLI dependencies)
+    Text/                    SourceText, TextSpan, line/column mapping
+    Diagnostics/             Diagnostic, DiagnosticBag, error codes
+    Syntax/                  tokens, lexer, AST nodes, parser
+    Binding/                 symbols, bound (typed) tree, binder/type checker
+    Emit/                    IL + metadata emission, runtimeconfig/launcher output
+    Compilation.cs           facade tying the stages together
+  Arith.Cli/                 existing: `build` / `run` / `version` commands, thin
+                             wrappers over Arith.Compiler
+tests/
+  Arith.Compiler.Tests/      new: unit tests per stage
+  Arith.Cli.Tests/           existing: CLI and end-to-end tests
+```
+
+Rationale: the CLI stays a thin argument-parsing shell, unit tests can target
+compiler internals without spawning processes (`InternalsVisibleTo` for
+`Arith.Compiler.Tests`), and a future `Arith.Compiler` NuGet package or language
+server has a natural home. `FibCommandEmitter` stays where it is as a reference
+until the real emitter supersedes it.
+
+## 3. Pipeline overview
+
+```text
+string (source)
+    ↓  SourceText.From
+SourceText
+    ↓  Lexer
+ImmutableArray<Token>
+    ↓  Parser
+CompilationUnitSyntax (AST)             ← purely syntactic, no types
+    ↓  Binder (two passes)
+BoundProgram (bound tree + symbols)     ← every expression carries its Type
+    ↓  Emitter
+fib.dll + fib.runtimeconfig.json + launchers
+```
+
+Every stage appends to a shared `DiagnosticBag` instead of throwing. The
+`Compilation` facade runs the stages in order and short-circuits before emit if
+any *error*-severity diagnostic exists. Later stages may assume the invariants
+of earlier ones (the binder never sees a token stream that failed to lex; the
+emitter never sees an ill-typed bound tree).
+
+The untyped AST and the bound tree are deliberately **two separate node
+hierarchies** (Roslyn-style) rather than one mutable AST annotated in place:
+
+- The AST mirrors the grammar and keeps trivia-level details (spans, the raw
+  text of literals) for diagnostics.
+- The bound tree mirrors the *semantics*: identifiers become symbol references,
+  every expression node has a resolved `Type`, and syntax-only distinctions can
+  already be normalized (e.g. `else if` chains are just nested bound ifs).
+
+For a language this small the duplication is cheap, and it keeps the type
+checker honest: the emitter consumes only bound nodes, so it can never
+accidentally depend on unchecked syntax.
+
+## 4. Stage design
+
+### 4.1 Text and diagnostics
+
+- `TextSpan` — `(Start, Length)` in UTF-16 code units into the source.
+- `SourceText` — the source string, its file path, and a lazily built line map
+  so diagnostics can render `file:line:column`.
+- `Diagnostic` — severity, an error code (`ARITH1234`-style, stable for tests),
+  a message, and a `TextSpan`.
+- `DiagnosticBag` — append-only collection threaded through every stage.
+
+Error codes get a single registry (constants plus message templates) so tests
+assert codes rather than message strings.
+
+### 4.2 Lexer
+
+Hand-written scanner producing a flat token array (not a lazy stream — Arith
+files are small and an array simplifies parser lookahead).
+
+- `Token` — `SyntaxKind`, `TextSpan`, and the raw text slice. **No parsed
+  literal values.** An unsuffixed integer literal's type — and therefore its
+  valid range — depends on the *expected type* at its use site, and
+  `-9223372036854775808` is only valid because the literal directly under unary
+  `-` is checked as an unsigned magnitude (spec §4.2). So the lexer records
+  where a numeric literal is; the binder parses its value once the expected
+  type is known.
+- Comments and whitespace are skipped (no trivia preservation in v0.1; the
+  token spans are enough for diagnostics).
+- Lexical errors (unterminated string or block comment, unknown character, bad
+  escape) produce a diagnostic plus a `Bad` token, and scanning continues.
+- The lexer ends the array with an `EndOfFile` token so the parser never checks
+  bounds.
+
+### 4.3 AST and parser
+
+AST nodes are immutable sealed records deriving from an abstract `SyntaxNode`
+with a `Span`. The hierarchy mirrors the EBNF in spec §12: one node type per
+production (`FunctionDeclarationSyntax`, `LetStatementSyntax`,
+`BinaryExpressionSyntax`, …). Consumers use C# pattern matching (`switch` on
+the node type) rather than a visitor hierarchy — with a closed set of node
+types, exhaustive switches are simpler and the compiler flags missing cases.
+
+The parser is recursive descent, one method per production, with the
+precedence levels of spec §8.5 encoded either as the grammar's cascaded
+methods or as a single precedence-climbing loop (implementation detail;
+precedence-climbing keeps it compact). Notable spots:
+
+- **Statement dispatch needs two tokens of lookahead**: a statement starting
+  with an identifier is an assignment if the next token is `=`/`+=`/…, and must
+  be a call statement otherwise. A flat token array makes this trivial.
+- `else if` is parsed per the grammar (`else` followed by either a block or a
+  nested if-statement) — no special AST node.
+- **Error recovery, v1**: on an unexpected token, report one diagnostic and
+  synchronize — skip tokens until a statement boundary (`;`, `}`, or a keyword
+  that starts a statement), then resume. This yields several useful errors per
+  file without the complexity of full recovery. The design permits upgrading
+  recovery later without touching the AST shape.
+
+The parser always returns a complete tree (using error placeholder nodes where
+needed) so later stages need no null handling — but the binder only runs when
+the parse produced no errors is *not* the rule; instead, binding runs anyway
+where possible so name/type errors surface alongside parse errors, and error
+placeholders bind to an error type that suppresses cascading diagnostics.
+
+### 4.4 Binding and type checking
+
+Binding runs in **two passes over the compilation unit**, because declaration
+order is insignificant (spec §1) and functions may be mutually recursive:
+
+1. **Declaration pass** — build the global `FunctionSymbol` table from all
+   function declarations: name, parameter symbols/types, return type. Detect
+   duplicate function names, a user-declared `print`, and validate the `main`
+   entry point (exists, unique, no parameters, returns `void` or `i32`).
+2. **Body pass** — bind each function body against the completed table,
+   producing a `BoundFunction` per declaration.
+
+Symbols and types:
+
+- `ArithType` — a small closed set (`Bool`, `I32`, `I64`, `F32`, `F64`,
+  `String`, plus internal `Void` and `Error`), exposed as singletons.
+- `FunctionSymbol`, `ParameterSymbol`, `LocalSymbol`. Locals resolve through a
+  scope stack (one scope per `{}` block) implementing shadowing and
+  same-scope redeclaration errors per spec §6.
+- The `Error` type is assignable to and from everything and silences follow-on
+  diagnostics, so one bad expression doesn't cascade into dozens of errors.
+
+Type checking is **bidirectional** where the spec requires it: binding an
+expression takes an optional *expected type*, which only affects unsuffixed
+numeric literals (spec §4/§7). Concretely: the annotated type of a `let`, the
+target of an assignment, the function's return type, a parameter's type, and
+the type of the *other* operand of a binary operator each provide the expected
+type; everything else is bottom-up synthesis with exact-type matching (no
+implicit conversions). Literal range checking happens here, including the
+unsigned-magnitude rule under unary `-`.
+
+Other checks owned by this stage:
+
+- Operator/operand type rules (spec §8), including `+` on strings and the
+  `==`/`!=`-only rule for `bool` and `string`.
+- Explicit conversion calls: `i32(x)` etc. parse as ordinary calls whose callee
+  is a type name; the binder turns them into `BoundConversionExpression` and
+  validates the source/target type pair (spec §7).
+- `print(x)` binds to a `BoundPrintStatement`-style node with the argument's
+  type recorded — the emitter picks the `Console.WriteLine` overload from it.
+- `break`/`continue` outside a loop; the loop variable of `for` being
+  read-only.
+- **Definite return analysis** (spec §5: every reachable path through a
+  value-returning function must return). A small conservative recursion over
+  the bound tree: a block "definitely returns" if any statement does; an `if`
+  does iff both branches exist and do; loops are never counted (their
+  conditions are not evaluated at compile time in v0.1).
+
+The output, `BoundProgram`, is the emitter's entire input: the function symbol
+table, a bound body per function, and the designated entry point.
+
+### 4.5 IL emission
+
+Generalizes `FibCommandEmitter` from one hard-coded program to the bound tree,
+keeping its SRM approach. Structure:
+
+1. **Layout pass** — as il-emission-notes §2 explains, MethodDef handles must
+   be predictable before bodies referencing them are written. First assign
+   every `FunctionSymbol` its `MethodDefinitionHandle` (row numbers in a fixed
+   order), then emit bodies; calls — including recursive and forward calls —
+   just look the handle up.
+2. **Per-function body emission** — a tree walk over the bound body using
+   `InstructionEncoder` + `ControlFlowBuilder` labels:
+   - Locals: each `LocalSymbol` gets a slot in the method's locals signature.
+     Slots are assigned per function (no reuse across sibling scopes in v0.1 —
+     simpler, and the JIT does not care).
+   - Control flow lowers directly to labels and branches: `if`/`else`,
+     `while` (test at top, back-edge branch), and `for` lowered to
+     "evaluate start/end once into temps, loop while `i <= / < end`" per spec
+     §9.3. `break`/`continue` branch to the innermost loop's exit/continue
+     labels, tracked on a stack during the walk. No separate lowering pass —
+     the language is small enough to lower inline; introduce a lowering stage
+     only if this walk grows unwieldy.
+   - Short-circuit `&&`/`||` lower to branches (no `and`/`or` on bools with
+     side-effecting operands).
+   - Checked integer arithmetic uses `add.ovf`/`sub.ovf`/`mul.ovf` (spec §11);
+     division/remainder rely on the runtime's `DivideByZeroException`/overflow
+     behavior. Numeric conversions use `conv.ovf.*` for float→int and
+     int→smaller-int (runtime error on out-of-range/NaN per spec §7) and plain
+     `conv.*` where no check is needed.
+   - String concatenation calls `String.Concat`; `string(value)` and `print`
+     must be **culture-invariant** (spec §10.1), so numeric-to-string uses the
+     invariant-culture .NET APIs, not bare `ToString()`.
+   - **`maxStack` is computed, not guessed**: the walk tracks the simulated
+     stack depth and records the true maximum (il-emission-notes §4 explains
+     why relying on the tiny-header default is a trap).
+3. **Assembly assembly** — metadata tables, entry-point wiring (a `void main`
+   still yields exit code 0; an `i32 main`'s return value is the exit code),
+   `ManagedPEBuilder`, plus the same side files the experiment writes:
+   `runtimeconfig.json` and the POSIX/Windows launchers. The `--aot` path via
+   `NativeAotPublisher` can be offered on `arith build` later; it consumes the
+   same IL.
+
+### 4.6 Compilation facade and CLI
+
+```csharp
+var compilation = Compilation.Parse(sourceText);      // lex + parse + bind
+if (compilation.Diagnostics.HasErrors) { print them; return 1; }
+compilation.Emit(outputDirectory, assemblyName);      // build
+```
+
+- `arith build <file.arith> [-o <dir>]` — compile; on failure print each
+  diagnostic as `file:line:col: error ARITHxxxx: message` and exit 1.
+- `arith run <file.arith>` — build into a temp/cache directory, then execute
+  via the `dotnet` host (reusing `ProcessRunner`), forwarding the exit code.
+- `arith experiment build-fib-command` remains until the real pipeline covers
+  it, then can be retired.
+
+## 5. Testing strategy
+
+- **Lexer**: token-kind/span/text expectations per snippet, including every
+  error case (unterminated string, bad escape, stray character).
+- **Parser**: assert the AST shape via a compact S-expression-style dump helper
+  (`(fn main (block (return (int 0))))`) so tests stay readable; plus
+  diagnostics tests for recovery cases.
+- **Binder**: the highest-value suite. Positive cases assert bound types;
+  negative cases assert *error code + span*. A small annotated-source helper
+  (markers in the test source designating the expected span) keeps these
+  terse. Every "compile-time error" sentence in LANGUAGE_SPEC.md should map to
+  at least one test here.
+- **Emitter/end-to-end**: compile a `.arith` source, run the output with the
+  `dotnet` host, assert stdout and exit code — in `Arith.Cli.Tests`, reusing
+  `CliRunner`/`ProcessRunner`. Cover the runtime-error contract too (overflow,
+  division by zero, bad conversions → nonzero exit, message on stderr).
+- Spec §11's evaluation-order guarantees get targeted end-to-end tests
+  (side-effecting call order in arguments and operands).
+
+## 6. Implementation order
+
+Follow the README roadmap, but reach a running end-to-end slice as early as
+possible — emission problems (signatures, maxStack, entry-point wiring) are
+the riskiest part and should not wait until last:
+
+1. **Infrastructure**: `Arith.Compiler` project, `SourceText`, `TextSpan`,
+   diagnostics.
+2. **Lexer** — complete (it is small), with tests.
+3. **AST + parser** — complete grammar, minimal (sync-point) error recovery,
+   with tests.
+4. **Binder, subset**: function tables, locals, `i64`/`i32` arithmetic,
+   `let`, `return`, calls, `print`.
+5. **Emitter for that subset + `arith build`/`run`** → first `.arith` file
+   runs end to end.
+6. **Control flow**: `if`/`while`/`for`/`break`/`continue`, logical operators,
+   definite-return analysis.
+7. **Remaining types and conversions**: `bool`/`f32`/`f64`/`string` rules,
+   explicit conversions, string concatenation, literal expected-type rules.
+8. **Hardening**: diagnostics polish, spec-coverage test sweep, README update,
+   retire the experiment command.
+
+Steps 4–7 each extend binder + emitter + tests together, keeping the compiler
+runnable at every step.
