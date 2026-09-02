@@ -13,8 +13,9 @@ defines *how*. The IL-emission techniques it builds on are described in
   them (`arith run`), matching the CLI sketched in the README.
 - Keep the classic stages — lexing, parsing, name resolution / type checking,
   IL generation — as separate, individually testable components.
-- Report errors with source locations, and keep the door open for reporting
-  *multiple* errors per run, even if early versions stop at the first one.
+- Report errors with source locations, and report *multiple* errors per
+  compile: every front-end stage recovers and continues rather than stopping
+  at the first error (see section 3).
 - No external parser generators or compiler frameworks: a hand-written lexer
   and recursive-descent parser, and `System.Reflection.Metadata` for output,
   as already prototyped by `FibCommandEmitter`.
