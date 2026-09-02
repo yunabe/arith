@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 
 using Arith.Compiler.Binding;
 using Arith.Compiler.Diagnostics;
+using Arith.Compiler.Emit;
 using Arith.Compiler.Syntax;
 
 namespace Arith.Compiler;
@@ -42,5 +43,21 @@ public sealed class Compilation
 
         BoundProgram program = Binder.Bind(syntaxTree.Root, diagnostics);
         return new Compilation(syntaxTree, program, diagnostics.ToImmutableArray(), diagnostics.HasErrors);
+    }
+
+    /// <summary>
+    /// Emits the program as an in-memory PE image. Emission is gated on an
+    /// error-free compile (design §3): with errors, the result carries the
+    /// diagnostics and no image.
+    /// </summary>
+    public EmitResult Emit(string assemblyName)
+    {
+        if (HasErrors)
+        {
+            return new EmitResult(success: false, Diagnostics, peImage: []);
+        }
+
+        ImmutableArray<byte> peImage = Emitter.Emit(Program, assemblyName);
+        return new EmitResult(success: true, Diagnostics, peImage);
     }
 }

@@ -134,8 +134,21 @@ public sealed class Binder
         BoundBlock body = BindBlock(syntax.Body, pushScope: false);
         PopScope();
         _currentFunction = null;
+
+        // Minimal definite-return check for the linear step-4/5 subset: with
+        // no control flow, "every reachable path returns" (spec §5) means
+        // the body contains a return at all. Step 6 replaces this with the
+        // full analysis over branches and loops (design §4.4).
+        if (symbol.ReturnType != ArithType.Void && !symbol.ReturnType.IsError && !ContainsReturn(body))
+        {
+            _diagnostics.Report(ErrorCodes.NotAllPathsReturn, syntax.Identifier.Span, symbol.Name);
+        }
+
         return body;
     }
+
+    private static bool ContainsReturn(BoundBlock block) =>
+        block.Statements.Any(s => s is BoundReturnStatement || (s is BoundBlock nested && ContainsReturn(nested)));
 
     private BoundBlock BindBlock(BlockSyntax syntax, bool pushScope = true)
     {

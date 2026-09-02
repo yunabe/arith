@@ -217,6 +217,8 @@ public sealed class BinderTests
     [InlineData("fn f(a: i64) { let a = 1; } fn main() { }", "ARITH3013")]   // Params share the body scope.
     [InlineData("fn f(a: i64, a: i64) { } fn main() { }", "ARITH3013")]
     [InlineData("fn g() { } fn main() { let x = g(); }", "ARITH3017")]       // Void call has no value.
+    [InlineData("fn f() -> i64 { } fn main() { }", "ARITH3016")]             // No return at all.
+    [InlineData("fn f() -> i64 { print(1); } fn main() { }", "ARITH3016")]
     public void InvalidProgram_ReportsExactlyOneDiagnostic(string source, string expectedCode)
     {
         Compilation compilation = Compile(source);
@@ -400,6 +402,16 @@ public sealed class BinderTests
         Compilation compilation = CompileMain("if y { let x = z; }");
 
         Assert.Equal(["ARITH3901"], Codes(compilation));
+    }
+
+    [Fact]
+    public void DeadCodeAfterReturn_IsLegal()
+    {
+        // Spec §5 requires every *reachable* path to return; statements
+        // after a return are unreachable, not an error.
+        Compilation compilation = Compile("fn f() -> i64 { return 1; print(2); } fn main() { }");
+
+        Assert.Empty(compilation.Diagnostics);
     }
 
     [Fact]

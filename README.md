@@ -8,9 +8,11 @@ The goal of this project is to explore the fundamental stages of a compiler—le
 
 > [!NOTE]
 > The language specification is in place and the compiler is being built stage
-> by stage (see [docs/compiler-design.md](docs/compiler-design.md)); lexing,
-> parsing, and binding (name resolution and type checking, minus control flow
-> and conversions) are implemented, and IL emission is not yet.
+> by stage (see [docs/compiler-design.md](docs/compiler-design.md)). `arith
+> build` and `arith run` work end to end for the linear subset — functions,
+> locals, numeric arithmetic, and `print`; control flow (`if`/`while`/`for`),
+> comparison and logical operators, string concatenation, and explicit
+> conversions are not compiled yet and report a temporary ARITH3901 error.
 
 ## Example
 
@@ -62,20 +64,23 @@ large:
 
 See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) for the complete syntax and semantics.
 
-## Planned commands
-
-The compiler is expected to provide the following command-line interface:
+## Commands
 
 ```console
-arith build hello.arith
-arith run hello.arith
+arith build hello.arith [-o <dir>]   # compile into a .NET assembly
+arith run hello.arith                # compile and run, forwarding the exit code
 ```
 
-For example, `build` will produce framework-dependent artifacts such as:
+The source file must be named `<program-name>.arith`, where `<program-name>`
+starts with a letter or `_` and contains only letters, digits, `_`, and `-`
+(a CLI rule, not part of the language); the outputs are named after it.
+
+`build` produces framework-dependent artifacts:
 
 ```text
-hello.dll
-hello.runtimeconfig.json
+hello.dll                  the compiled assembly
+hello.runtimeconfig.json   names the shared framework for the dotnet host
+hello / hello.cmd          convenience launchers
 ```
 
 The generated program can also be run with the .NET CLI:
@@ -84,7 +89,9 @@ The generated program can also be run with the .NET CLI:
 dotnet hello.dll
 ```
 
-## Proposed compiler pipeline
+On failure, diagnostics are printed as `file:line:col: error ARITHxxxx: message`.
+
+## Compiler pipeline
 
 ```text
 Arith source
@@ -98,7 +105,7 @@ typed syntax tree
 .NET assembly
 ```
 
-The initial implementation will keep these stages separate and report errors with their source locations.
+The stages are separate components of the `Arith.Compiler` library, and every stage reports errors with their source locations.
 
 ## Development
 
@@ -118,7 +125,7 @@ The `version` command prints the CLI version:
 
 The repository is laid out as follows:
 
-- `src/Arith.Compiler` — the compiler as a library (currently source text, diagnostics, lexer, parser, and binder; architecture in [docs/compiler-design.md](docs/compiler-design.md))
+- `src/Arith.Compiler` — the compiler as a library (source text, diagnostics, lexer, parser, binder, and IL emitter; architecture in [docs/compiler-design.md](docs/compiler-design.md))
 - `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
 - `src/Arith.Cli` — the `arith` command-line tool (currently `arith version` and `arith experiment build-fib-command`, a code-generation dry run that emits a demo `fib` program as raw IL and metadata, optionally NativeAOT-compiled with `--aot`; see [docs/il-emission-notes.md](docs/il-emission-notes.md))
 - `tests/Arith.Cli.Tests` — xUnit v3 tests
