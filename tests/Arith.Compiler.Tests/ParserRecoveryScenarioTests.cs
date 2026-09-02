@@ -58,6 +58,25 @@ public sealed class ParserRecoveryScenarioTests
         Assert.Equal("(fn t (block (if (> x 0) (block (expr (call print x))))))", dump);
     }
 
+    // IDEAL: one diagnostic saying a '}' is missing before `else`, then keep
+    // the else clause attached to the if. An `else` inside a then-block is a
+    // strong signal that the block should have ended immediately before it.
+    // TODAY: statement recovery consumes both `else` and its '{'. The
+    // would-be else body is consequently appended to the then-block, and the
+    // recovered if has no else clause at all.
+    [Fact]
+    public void MissingCloseBraceBeforeElse_DropsTheElseClause()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { if a { let x = 1; else { let y = 2; } }");
+
+        string[] expectedCodes = ["ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (if a (block (let x 1) (error-stmt) (let y 2)))))",
+            dump);
+    }
+
     // IDEAL: one diagnostic pointing at `lett`, ideally suggesting `let`
     // (one edit away from a statement keyword).
     // TODAY: `lett` parses as a name expression, producing the unrelated
@@ -87,6 +106,24 @@ public sealed class ParserRecoveryScenarioTests
         string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2002"];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal("(fn t (block (let x (error)) (expr 1)))", dump);
+    }
+
+    // IDEAL: the lexer diagnostic for '@' is sufficient; consume its Bad
+    // token as the malformed identifier and resume at '=' without parser
+    // diagnostics cascading from the same character.
+    // TODAY: MatchToken leaves the Bad token in place, so the missing
+    // identifier, '=', and ';' each report again before the remaining
+    // assignment is skipped as another bad statement: five diagnostics for
+    // one invalid character.
+    [Fact]
+    public void BadTokenInIdentifierPosition_CascadesIntoParserDiagnostics()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let @ = 1; }");
+
+        string[] expectedCodes =
+            ["ARITH1001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let  (error)) (error-stmt)))", dump);
     }
 
     // IDEAL: `main() {` at the top level is recognized as a function
@@ -140,6 +177,22 @@ public sealed class ParserRecoveryScenarioTests
         Assert.Equal(
             "(fn t (block (if a (block (let x 1) (return x)))))",
             SyntaxDumper.Dump(tree.Root));
+    }
+
+    // IDEAL: interpret `return }` as the grammar-valid valueless `return;`
+    // with only its semicolon missing, so the return node has no value and a
+    // single diagnostic points at the insertion site.
+    // TODAY: only an actual ';' selects the valueless form. The '}' therefore
+    // becomes a missing value expression, followed by a second diagnostic for
+    // the missing ';', and the tree records an error-valued return.
+    [Fact]
+    public void MissingSemicolonAfterValuelessReturn_CreatesAnErrorValue()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { return }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (return (error))))", dump);
     }
 
     // IDEAL: one diagnostic ("expected ';', found ','"), treating the comma
