@@ -347,8 +347,10 @@ public sealed class BuildRunCommandTests : IDisposable
     [Fact]
     public void Run_StringEquality_ComparesContents()
     {
-        // The strings compared here are distinct instances (one built at
-        // runtime by a call), so reference equality would answer wrongly.
+        // Behavioral smoke test only: every string here comes from an
+        // interned ldstr, so this run could not tell string.Equals from
+        // reference equality. EmitterTests.StringEquality_CallsStringEquals
+        // pins the actual lowering by inspecting the IL.
         string source = WriteSource("streq.arith", """
             fn label(flag: bool) -> string {
                 if flag {
