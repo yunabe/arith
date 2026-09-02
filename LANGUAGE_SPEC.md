@@ -209,7 +209,9 @@ if x > 0 {
 
 Arith does not perform implicit conversions between distinct numeric types. The expected-type behavior for unsuffixed numeric literals described in Section 4 is the only exception.
 
-An expected type may come from a type-annotated initializer, an assignment, a `return` statement, a function parameter, or the other operand of a binary operator. The default literal type is used when a unique expected type cannot be determined.
+An expected type may come from a type-annotated initializer, an assignment, a `return` statement, a function parameter, or the other operand of a binary operator. An expected type only applies to a literal of the same numeric category: an expected integer type affects only integer literals, and an expected floating-point type affects only floating-point literals. The default literal type is used when a unique expected type cannot be determined.
+
+The target type of an explicit conversion does not provide an expected type to its operand. The operand is typed on its own — using the default literal type if nothing else determines it — and the conversion is then applied to that value. For example, `i32(3000000000)` converts the `i64` value `3000000000` to `i32` and therefore produces a runtime error, and `f64(1)` converts the `i64` value `1` to `f64`.
 
 A type name acts as a built-in conversion function for explicit numeric conversions.
 

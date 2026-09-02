@@ -191,17 +191,33 @@ made deterministic with a *pending* numeric type rather than ad-hoc lookahead:
 - An unsuffixed integer (resp. floating-point) literal initially binds as
   `PendingInt` (`PendingFloat`), keeping its raw text.
 - Unary `-`, parentheses, and the arithmetic operators propagate pendingness:
-  if both operands are pending, the result stays pending; if exactly one
-  operand has a concrete numeric type, that type becomes the expected type of
-  the pending side — resolving its literals recursively — and the operator is
-  then checked as usual. So `1 + 2i32` and `(1 + 2) + 3i32` are both `i32`.
-- A *forcing context* resolves a pending expression to a concrete type: a
-  `let` type annotation, the assignment target's type, the declared return
-  type at `return`, a call argument's parameter type, an explicit-conversion
-  operand, the concrete-typed other side of a comparison, and positions that
-  require a fixed type (`for` range endpoints force `i64`). Where no forcing
-  context supplies a type — e.g. `let a = 1 + 2;` or a bare
-  `print(1 + 2);` — the defaults apply: `i64` for integers, `f64` for floats.
+  if both operands are pending in the same category, the result stays
+  pending; if exactly one operand has a concrete type of the same numeric
+  category, that type becomes the expected type of the pending side —
+  resolving its literals recursively — and the operator is then checked as
+  usual. So `1 + 2i32` and `(1 + 2) + 3i32` are both `i32`.
+- **Pending categories never cross.** `PendingInt` resolves only to `i32` or
+  `i64`, `PendingFloat` only to `f32` or `f64`. A concrete operand of the
+  other numeric category is not a compatible expectation, and an arithmetic
+  operator whose two unresolved operands have different pending categories is
+  a mixed-numeric-types error, not a merged pending result. So `1 + 2.0f64`,
+  `let x: f64 = 1 + 2;`, and `1 + 2.0` are all compile-time errors — Arith
+  has no implicit int/float conversion, and literal typing must not smuggle
+  one in.
+- A *forcing context* resolves a pending expression to a concrete type of its
+  own category: a `let` type annotation, the assignment target's type, the
+  declared return type at `return`, a call argument's parameter type, the
+  concrete-typed other side of a comparison, and positions that require a
+  fixed type (`for` range endpoints force `i64`). Where no forcing context
+  supplies a type — e.g. `let a = 1 + 2;` or a bare `print(1 + 2);` — the
+  category default applies: `i64` for integers, `f64` for floats.
+- An explicit conversion's target type is **not** an expected type for its
+  operand: `i32(x)` binds `x` with no expectation, applying the category
+  default if `x` is still pending, and only then checks/emits the requested
+  conversion. So `i32(3000000000)` is an in-range `i64` literal followed by
+  an `i64`-to-`i32` conversion — an out-of-range failure follows the
+  conversion's *runtime*-error rule (spec §7), and is not a compile-time
+  literal-range error — and `f64(1)` is an `i64`-to-`f64` conversion.
 - Resolution is the moment of range checking (including the
   unsigned-magnitude rule under unary `-`): `let x: i32 = 3000000000;` errors
   here, not in the lexer or parser.
