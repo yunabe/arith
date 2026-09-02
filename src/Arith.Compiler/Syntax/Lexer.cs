@@ -49,6 +49,12 @@ public sealed class Lexer
         return index < _text.Length ? _text[index] : '\0';
     }
 
+    /// <summary>
+    /// Scans the next token. The loop discards whitespace and comments
+    /// (spec §2.3) — they produce no tokens — then the first significant
+    /// character alone decides the token class, and the class-specific
+    /// method consumes the rest.
+    /// </summary>
     private Token NextToken()
     {
         while (true)
@@ -65,6 +71,7 @@ public sealed class Lexer
                 continue;
             }
 
+            // Line comment: runs to (but not past) the end of the line.
             if (c == '/' && Lookahead == '/')
             {
                 while (!AtEnd && Current is not ('\n' or '\r'))
@@ -75,6 +82,8 @@ public sealed class Lexer
                 continue;
             }
 
+            // Block comment: normally skipped like whitespace; only an
+            // unterminated one surfaces as a token (a Bad one).
             if (c == '/' && Lookahead == '*')
             {
                 Token? unterminated = SkipBlockComment();
@@ -117,6 +126,12 @@ public sealed class Lexer
         return MakeToken(SyntaxKind.BadToken, span);
     }
 
+    /// <summary>
+    /// Lexes a double-quoted string literal (spec §4.4). The token keeps the
+    /// raw text, quotes and escapes included; unescaping happens later. A
+    /// newline or end of file inside the literal makes it unterminated — the
+    /// token then ends at the newline so the next line lexes normally.
+    /// </summary>
     private Token LexString()
     {
         int start = _position;
@@ -170,6 +185,13 @@ public sealed class Lexer
         return MakeToken(kind, TextSpan.FromBounds(start, _position));
     }
 
+    /// <summary>
+    /// Lexes a decimal integer or floating-point literal, with an optional
+    /// i32/i64/f32/f64 type suffix (spec §4.2–§4.3). The token records only
+    /// where the literal is and whether it is integer- or float-shaped; the
+    /// value is parsed by the binder, whose expected type decides the valid
+    /// range.
+    /// </summary>
     private Token LexNumber()
     {
         int start = _position;
@@ -217,6 +239,10 @@ public sealed class Lexer
         return MakeToken(kind, TextSpan.FromBounds(start, _position));
     }
 
+    /// <summary>
+    /// Lexes <c>[A-Za-z_][A-Za-z0-9_]*</c> (spec §2.1, ASCII only) and
+    /// classifies the word as a keyword or an identifier (§2.2).
+    /// </summary>
     private Token LexIdentifierOrKeyword()
     {
         int start = _position;
@@ -230,6 +256,13 @@ public sealed class Lexer
         return new Token(SyntaxFacts.GetKeywordOrIdentifierKind(text), span, text);
     }
 
+    /// <summary>
+    /// Lexes operators and punctuation by longest match — two-character
+    /// forms (and three-character <c>..=</c>) are listed before their
+    /// one-character prefixes. A character starting no token at all — which
+    /// includes a lone <c>&amp;</c> or <c>|</c>, since Arith has no bitwise
+    /// operators — becomes a Bad token.
+    /// </summary>
     private Token LexOperatorOrUnexpected()
     {
         char c = Current;
