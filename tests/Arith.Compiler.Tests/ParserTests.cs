@@ -176,6 +176,16 @@ public sealed class ParserTests
         Assert.Equal("(let y 2)", SyntaxDumper.Dump(body.Statements[1]));
     }
 
+    [Theory]
+    [InlineData("fn t() { let x; }")]      // Spec §6: an initializer is required.
+    [InlineData("fn t() { let a = +1; }")] // Spec §8.1: unary `+` does not exist.
+    public void SpecForbiddenForm_ReportsASyntaxError(string source)
+    {
+        SyntaxTree tree = Parse(source);
+
+        Assert.Contains(tree.Diagnostics, d => d.Code == "ARITH2001");
+    }
+
     [Fact]
     public void Parse_NonCallExpressionStatement_ReportsArith2002()
     {

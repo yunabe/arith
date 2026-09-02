@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Security;
 
-namespace Arith.Cli.Experiments;
+namespace Arith.Cli;
 
 /// <summary>
 /// Compiles an IL assembly into a native executable with the official NativeAOT

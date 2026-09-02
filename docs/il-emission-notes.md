@@ -1,56 +1,68 @@
-# How `arith experiment build-fib-command` emits a .NET assembly
+# How the Arith compiler emits a .NET assembly
 
-This note explains what `FibCommandEmitter` actually writes, as background for the
-Arith compiler's future code-generation stage. The emitter uses
-`System.Reflection.Metadata` (SRM) — the same library the C# compiler uses to write
-assemblies — so everything below maps 1:1 to API calls in
-[`FibCommandEmitter.cs`](../src/Arith.Cli/Experiments/FibCommandEmitter.cs).
+This note explains how an assembly is written with `System.Reflection.Metadata`
+(SRM) — the same library the C# compiler uses — using the `fib` demo program
+that prototyped the Arith compiler's code-generation stage.
+
+> [!NOTE]
+> The prototype this note walks through, `arith experiment build-fib-command`
+> and its hand-written `FibCommandEmitter`, has been retired now that the real
+> compiler covers everything it demonstrated: the same techniques live on,
+> generalized, in [`Emitter.cs`](../src/Arith.Compiler/Emit/Emitter.cs), and
+> the `--aot` mode became `arith build --aot`. The retired code is still
+> readable in git history (`git log --diff-filter=D -- '*FibCommandEmitter*'`),
+> and everything below remains an accurate guided tour of the emission
+> techniques the compiler uses.
 
 The authoritative reference is ECMA-335 (Common Language Infrastructure), especially
 partition II (metadata) and partition III (IL instructions).
 
-## Quickstart
+## Quickstart (today's equivalent)
 
-Requires the .NET 10 SDK (the emitted program targets the .NET 10 runtime).
+Requires the .NET 10 SDK. The retired experiment produced a fixed, hand-coded
+`fib` program; the same program can now be expressed in Arith and compiled for
+real:
 
 ```console
-$ dotnet run --project src/Arith.Cli -- experiment build-fib-command out
-$ dotnet out/fib.dll 10
-fib(10) = 89
-$ out/fib 10      # same thing, via the launcher script
-fib(10) = 89
+$ cat fib.arith
+fn fib(n: i64) -> i64 {
+    if n < 2 {
+        return 1;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main() {
+    print(fib(10));
+}
+$ dotnet run --project src/Arith.Cli -- build fib.arith -o out
+$ dotnet out/fib.dll
+89
+$ out/fib      # same thing, via the launcher script
+89
 ```
 
 Four files are written into the output directory (created if missing):
 
 | File | Role |
 | --- | --- |
-| `fib.dll` | The hand-emitted assembly containing all logic |
+| `fib.dll` | The emitted assembly containing all logic |
 | `fib.runtimeconfig.json` | Tells the `dotnet` host to load the .NET 10 shared framework |
 | `fib` | POSIX shell launcher (marked executable) wrapping `dotnet fib.dll` |
 | `fib.cmd` | The equivalent Windows launcher |
 
-Behavior of the emitted program:
-
-- `fib(0) = fib(1) = 1` and `fib(n) = fib(n - 1) + fib(n - 2)`, hence `fib(10) = 89`.
-- Negative inputs fall into the `n < 2` base case and return 1.
-- The recursion is intentionally naive, so the cost grows exponentially; inputs
-  around 40 and above take noticeably long.
-- Anything but exactly one integer argument prints `usage: fib <n>` to stderr and
-  exits with code 1.
-
-Note the scope: this experiment emits one fixed, hard-coded program to demonstrate
-IL generation. It does not read Arith source code — compiling `.arith` files is the
-job of the future `arith build`, which will generalize the techniques shown here.
-
-With `--aot`, the same IL is additionally compiled ahead-of-time into a single
+With `--aot`, the same IL is instead compiled ahead-of-time into a single
 native executable that runs without the `dotnet` host (see section 6):
 
 ```console
-$ dotnet run --project src/Arith.Cli -- experiment build-fib-command out --aot
-$ out/fib 10
-fib(10) = 89
+$ dotnet run --project src/Arith.Cli -- build fib.arith -o out --aot
+$ out/fib
+89
 ```
+
+The sections below discuss the original hand-emitted demo — a `fib` taking its
+input from the command line — because its fixed shape keeps every table row and
+instruction accountable.
 
 ## 1. What a .NET assembly file is
 
@@ -191,12 +203,14 @@ Under the hood NativeAOT is two steps:
 2. The **platform linker** (clang on macOS/Linux) links that object file with the
    runtime's static libraries (GC, `libSystem.Native`, ...) into the executable.
 
-`NativeAotPublisher` deliberately does not invoke `ilc` and the linker itself:
-the linker arguments live in the SDK's `Microsoft.NETCore.Native.*.targets` and
-are heavily platform- and version-specific. Instead it generates a throwaway
-MSBuild project whose `CoreCompile` target — the step that normally runs the C#
-compiler — is overridden to just copy the IL assembly emitted by
-`FibCommandEmitter` into place, then runs `dotnet publish` with `PublishAot=true`.
+[`NativeAotPublisher`](../src/Arith.Cli/NativeAotPublisher.cs) — now the
+engine behind `arith build --aot` — deliberately does not invoke `ilc` and the
+linker itself: the linker arguments live in the SDK's
+`Microsoft.NETCore.Native.*.targets` and are heavily platform- and
+version-specific. Instead it generates a throwaway MSBuild project whose
+`CoreCompile` target — the step that normally runs the C# compiler — is
+overridden to just copy the already-emitted IL assembly into place, then runs
+`dotnet publish` with `PublishAot=true`.
 The official pipeline drives ILC and the link; the C# compiler never runs. (The
 one MSBuild subtlety: `Sdk.targets` must be imported explicitly *before* the
 overriding target, because the last definition of a target wins.)

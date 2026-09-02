@@ -140,16 +140,18 @@ public sealed class BuildRunCommandTests : IDisposable
         Assert.Contains("System.OverflowException", result.Error, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void Run_DivisionByZero_FailsAtRuntime()
+    [Theory]
+    [InlineData("print(10 / zero());")]
+    [InlineData("print(10 % zero());")] // Spec §11: remainder by zero faults too.
+    public void Run_DivisionOrRemainderByZero_FailsAtRuntime(string statement)
     {
-        string source = WriteSource("divzero.arith", """
+        string source = WriteSource("divzero.arith", $$"""
             fn zero() -> i64 {
                 return 0;
             }
 
             fn main() {
-                print(10 / zero());
+                {{statement}}
             }
             """);
 
@@ -157,6 +159,27 @@ public sealed class BuildRunCommandTests : IDisposable
 
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("System.DivideByZeroException", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_DividingI64MinByMinusOne_Overflows()
+    {
+        // Spec §11: integer division is checked; i64::MIN / -1 has no
+        // representable result.
+        string source = WriteSource("divmin.arith", """
+            fn minusOne() -> i64 {
+                return -1;
+            }
+
+            fn main() {
+                print(-9223372036854775808 / minusOne());
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("System.OverflowException", result.Error, StringComparison.Ordinal);
     }
 
     [Fact]

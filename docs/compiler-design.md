@@ -354,8 +354,9 @@ on-disk artifacts, and every packaging mode consumes the same bytes:
   via the `dotnet` host (reusing `ProcessRunner`), forwarding the exit code.
 - A future `arith build --aot` hands the same `EmitResult` bytes to
   `NativeAotPublisher`: AOT is packaging, not a second emission path.
-- `arith experiment build-fib-command` remains until the real pipeline covers
-  it, then can be retired.
+- `arith experiment build-fib-command` remained until the real pipeline
+  covered it, and was retired once `arith build --aot` took over its AOT mode
+  (docs/il-emission-notes.md stays as the guided tour of the techniques).
 
 ## 5. Testing strategy
 

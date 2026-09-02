@@ -68,6 +68,7 @@ See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) for the complete syntax and semantics.
 
 ```console
 arith build hello.arith [-o <dir>]   # compile into a .NET assembly
+arith build hello.arith --aot        # compile into a single native executable
 arith run hello.arith                # compile and run, forwarding the exit code
 ```
 
@@ -88,6 +89,11 @@ The generated program can also be run with the .NET CLI:
 ```console
 dotnet hello.dll
 ```
+
+With `--aot`, the same emitted IL is instead compiled ahead-of-time by the
+official NativeAOT toolchain into one native executable that runs without the
+`dotnet` host (requires the platform's native linker, e.g. Xcode Command Line
+Tools on macOS; see [docs/il-emission-notes.md](docs/il-emission-notes.md)).
 
 On failure, diagnostics are printed as `file:line:col: error ARITHxxxx: message`.
 
@@ -127,19 +133,16 @@ The repository is laid out as follows:
 
 - `src/Arith.Compiler` — the compiler as a library (source text, diagnostics, lexer, parser, binder, and IL emitter; architecture in [docs/compiler-design.md](docs/compiler-design.md))
 - `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
-- `src/Arith.Cli` — the `arith` command-line tool (currently `arith version` and `arith experiment build-fib-command`, a code-generation dry run that emits a demo `fib` program as raw IL and metadata, optionally NativeAOT-compiled with `--aot`; see [docs/il-emission-notes.md](docs/il-emission-notes.md))
+- `src/Arith.Cli` — the `arith` command-line tool (`build`, `run`, `version`), including the artifact writer and the NativeAOT packaging behind `build --aot`
 - `tests/Arith.Cli.Tests` — xUnit v3 tests
 - `Directory.Build.props` / `Directory.Packages.props` — shared build settings and centrally managed NuGet package versions
 - Build outputs are written to `artifacts/`
 
 ## Roadmap
 
-1. Tokens and lexer
-2. Abstract syntax tree and recursive-descent parser
-3. Name resolution and type checking
-4. IL generation for expressions, local variables, and functions
-5. IL generation for branches and loops
-6. .NET assembly emission and execution
-7. Diagnostics and test coverage
+All stages of the original roadmap — lexer, parser, name resolution and type
+checking, IL generation for expressions and control flow, assembly emission
+and execution, and diagnostics with test coverage — are implemented; language
+v0.1 is complete.
 
-Arrays, structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.1.
+Arrays, structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.1 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)).

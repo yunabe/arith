@@ -22,7 +22,8 @@ internal static partial class CompilerCommands
     private static partial Regex ProgramNameRegex();
 
     /// <summary>Compiles a source file and writes its artifacts. Returns the process exit code.</summary>
-    internal static int Build(string sourcePath, string? outputDirectory, TextWriter output, TextWriter error)
+    internal static int Build(
+        string sourcePath, string? outputDirectory, bool aot, TextWriter output, TextWriter error)
     {
         if (ValidateProgramName(sourcePath, error) is not { } name)
         {
@@ -51,6 +52,25 @@ internal static partial class CompilerCommands
         if (!result.Success)
         {
             return 1;
+        }
+
+        // AOT is packaging, not a second emission path (design §4.6): the
+        // NativeAOT toolchain consumes the same PE bytes the JIT path would.
+        if (aot)
+        {
+            try
+            {
+                string executable = NativeAotPublisher.Publish(
+                    [.. result.PeImage], name, resolvedOutputDirectory, output);
+                output.WriteLine($"wrote {executable}");
+                return 0;
+            }
+            catch (Exception exception)
+                when (exception is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                error.WriteLine($"error: NativeAOT publish failed: {exception.Message}");
+                return 1;
+            }
         }
 
         IReadOnlyList<string> written;

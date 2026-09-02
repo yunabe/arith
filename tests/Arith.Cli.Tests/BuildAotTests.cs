@@ -3,18 +3,33 @@ using System.Diagnostics;
 
 namespace Arith.Cli.Tests;
 
-public class FibAotTests
+public class BuildAotTests
 {
     // NativeAOT compilation takes tens of seconds and needs a native linker, so
     // this test only runs when explicit tests are requested:
     //   dotnet test --project tests/Arith.Cli.Tests -- --explicit on
     [Fact(Explicit = true)]
-    public void BuildFibCommand_Aot_ProducesRunnableNativeExecutable()
+    public void BuildAot_ProducesRunnableNativeExecutable()
     {
-        string outputDirectory = Directory.CreateTempSubdirectory("arith-fib-aot-test-").FullName;
+        string directory = Directory.CreateTempSubdirectory("arith-aot-test-").FullName;
         try
         {
-            CliResult build = CliRunner.Run("experiment", "build-fib-command", outputDirectory, "--aot");
+            string source = Path.Combine(directory, "fib.arith");
+            File.WriteAllText(source, """
+                fn fib(n: i64) -> i64 {
+                    if n < 2 {
+                        return 1;
+                    }
+                    return fib(n - 1) + fib(n - 2);
+                }
+
+                fn main() {
+                    print("fib(10) = " + string(fib(10)));
+                }
+                """);
+            string outputDirectory = Path.Combine(directory, "out");
+
+            CliResult build = CliRunner.Run("build", source, "-o", outputDirectory, "--aot");
             Assert.Equal(0, build.ExitCode);
 
             string executable = Path.Combine(
@@ -23,16 +38,14 @@ public class FibAotTests
             AssertIsNativeExecutableImage(executable);
 
             // The native binary runs directly — no dotnet host involved.
-            ProcessStartInfo startInfo = new(executable);
-            startInfo.ArgumentList.Add("10");
-            ProcessResult run = ProcessRunner.Run(startInfo);
+            ProcessResult run = ProcessRunner.Run(new ProcessStartInfo(executable));
 
             Assert.Equal(0, run.ExitCode);
             Assert.Equal("fib(10) = 89\n", run.Output.ReplaceLineEndings("\n"));
         }
         finally
         {
-            Directory.Delete(outputDirectory, recursive: true);
+            Directory.Delete(directory, recursive: true);
         }
     }
 
