@@ -353,6 +353,18 @@ public sealed class BinderTests
     }
 
     [Theory]
+    [InlineData("fn g() { } fn main() { let x = y + g(); }")]
+    [InlineData("fn g() { } fn main() { let x = g() + y; }")]
+    public void ErrorAndVoidOperands_BothReportIndependently(string source)
+    {
+        // An unrelated Error on one side must not hide the void diagnostic
+        // on the other.
+        Compilation compilation = Compile(source);
+
+        Assert.Equal(["ARITH3005", "ARITH3017"], Codes(compilation));
+    }
+
+    [Theory]
     [InlineData("fn g() { } fn main() { let x: i64 = g(); }")]              // Annotated let.
     [InlineData("fn g() { } fn f(a: i64) { } fn main() { f(g()); }")]       // Argument position.
     [InlineData("fn g() { } fn f() -> i64 { return g(); } fn main() { }")]  // Return value.

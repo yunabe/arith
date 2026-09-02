@@ -453,13 +453,11 @@ public sealed class Binder
 
         BoundExpression left = BindExpression(syntax.Left, expected);
         BoundExpression right = BindExpression(syntax.Right, expected);
-        if (left.Type.IsError || right.Type.IsError)
-        {
-            return new BoundErrorExpression();
-        }
 
         // A void operand's primary problem is the missing value, not the
-        // operator; report it at the operand, like every other value context.
+        // operator; report it at the operand, like every other value
+        // context — and before the Error short-circuit, so an unrelated
+        // Error on the other side cannot hide it.
         bool hasVoidOperand = false;
         if (left.Type == ArithType.Void)
         {
@@ -473,7 +471,7 @@ public sealed class Binder
             hasVoidOperand = true;
         }
 
-        if (hasVoidOperand)
+        if (hasVoidOperand || left.Type.IsError || right.Type.IsError)
         {
             return new BoundErrorExpression();
         }
