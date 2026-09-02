@@ -29,4 +29,7 @@ public static class ErrorCodes
 
     public static readonly DiagnosticDescriptor NonCallExpressionStatement =
         new("ARITH2002", "only a call expression can be used as a statement");
+
+    public static readonly DiagnosticDescriptor TrailingComma =
+        new("ARITH2003", "trailing comma is not allowed");
 }
