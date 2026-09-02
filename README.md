@@ -7,7 +7,9 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The language specification and the CLI skeleton are in place, but the compiler itself has not been implemented yet.
+> The language specification is in place and the compiler is being built stage
+> by stage (see [docs/compiler-design.md](docs/compiler-design.md)); lexing is
+> implemented, and parsing onward is not yet.
 
 ## Example
 
@@ -115,6 +117,8 @@ The `version` command prints the CLI version:
 
 The repository is laid out as follows:
 
+- `src/Arith.Compiler` — the compiler as a library (currently source text, diagnostics, and the lexer; architecture in [docs/compiler-design.md](docs/compiler-design.md))
+- `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
 - `src/Arith.Cli` — the `arith` command-line tool (currently `arith version` and `arith experiment build-fib-command`, a code-generation dry run that emits a demo `fib` program as raw IL and metadata, optionally NativeAOT-compiled with `--aot`; see [docs/il-emission-notes.md](docs/il-emission-notes.md))
 - `tests/Arith.Cli.Tests` — xUnit v3 tests
 - `Directory.Build.props` / `Directory.Packages.props` — shared build settings and centrally managed NuGet package versions
