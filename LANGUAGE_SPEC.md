@@ -259,6 +259,7 @@ let message = "answer=" + string(a);
 
 - All comparison operators may be used with two values of the same numeric type.
 - Only `==` and `!=` may be used with `bool` and `string` values.
+- String `==` compares contents by ordinal (UTF-16 code unit) equality, and `!=` is its negation. Whether two equal strings are the same object is not observable.
 - A comparison produces a `bool` value.
 - Floating-point comparisons follow the .NET IEEE 754 behavior.
 

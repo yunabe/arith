@@ -30,10 +30,11 @@ src/
     Diagnostics/             Diagnostic, DiagnosticBag, error codes
     Syntax/                  tokens, lexer, AST nodes, parser
     Binding/                 symbols, bound (typed) tree, binder/type checker
-    Emit/                    IL + metadata emission, runtimeconfig/launcher output
+    Emit/                    IL + metadata emission (in-memory PE image)
     Compilation.cs           facade tying the stages together
   Arith.Cli/                 existing: `build` / `run` / `version` commands, thin
-                             wrappers over Arith.Compiler
+                             wrappers over Arith.Compiler, plus the artifact
+                             writer (dll/runtimeconfig/launchers, AOT packaging)
 tests/
   Arith.Compiler.Tests/      new: unit tests per stage
   Arith.Cli.Tests/           existing: CLI and end-to-end tests
@@ -58,14 +59,20 @@ CompilationUnitSyntax (AST)             ← purely syntactic, no types
     ↓  Binder (two passes)
 BoundProgram (bound tree + symbols)     ← every expression carries its Type
     ↓  Emitter
-fib.dll + fib.runtimeconfig.json + launchers
+EmitResult (in-memory PE image + diagnostics)
+    ↓  CLI artifact writer
+<name>.dll + <name>.runtimeconfig.json + launchers
 ```
 
-Every stage appends to a shared `DiagnosticBag` instead of throwing. The
-`Compilation` facade runs the stages in order and short-circuits before emit if
-any *error*-severity diagnostic exists. Later stages may assume the invariants
-of earlier ones (the binder never sees a token stream that failed to lex; the
-emitter never sees an ill-typed bound tree).
+Every stage appends to a shared `DiagnosticBag` instead of throwing, and
+**multi-diagnostic compilation is the policy**: the front end always runs to
+completion so one compile reports as many distinct errors as it can. The
+lexer substitutes `Bad` tokens and keeps scanning, the parser builds error
+placeholder nodes and resynchronizes, and the binder binds whatever it can —
+error tokens and error syntax bind to the `Error` type, which suppresses
+predictable cascade diagnostics. The only gate is emission: the `Compilation`
+facade skips emit when any *error*-severity diagnostic exists, so the emitter
+(and only the emitter) may assume a fully valid, well-typed bound tree.
 
 The untyped AST and the bound tree are deliberately **two separate node
 hierarchies** (Roslyn-style) rather than one mutable AST annotated in place:
@@ -119,8 +126,14 @@ AST nodes are immutable sealed records deriving from an abstract `SyntaxNode`
 with a `Span`. The hierarchy mirrors the EBNF in spec §12: one node type per
 production (`FunctionDeclarationSyntax`, `LetStatementSyntax`,
 `BinaryExpressionSyntax`, …). Consumers use C# pattern matching (`switch` on
-the node type) rather than a visitor hierarchy — with a closed set of node
-types, exhaustive switches are simpler and the compiler flags missing cases.
+the node type) rather than a visitor hierarchy. Note that C# does **not**
+check exhaustiveness over such a hierarchy: a switch over the abstract base
+warns (CS8509) even when every current subclass is handled, because the
+language has no closed hierarchies yet (see the `closed` hierarchy proposal),
+and adding a fallback arm silences new-node omissions instead of reporting
+them. So every such switch carries an explicit fallback that throws an
+internal-compiler-error exception (e.g. `UnreachableException`), and coverage
+of new node kinds is enforced by tests, not by the compiler.
 
 The parser is recursive descent, one method per production, with the
 precedence levels of spec §8.5 encoded either as the grammar's cascaded
@@ -139,10 +152,10 @@ precedence-climbing keeps it compact). Notable spots:
   recovery later without touching the AST shape.
 
 The parser always returns a complete tree (using error placeholder nodes where
-needed) so later stages need no null handling — but the binder only runs when
-the parse produced no errors is *not* the rule; instead, binding runs anyway
-where possible so name/type errors surface alongside parse errors, and error
-placeholders bind to an error type that suppresses cascading diagnostics.
+needed) so later stages need no null handling. Binding always runs, parse
+errors or not, so name and type errors surface alongside syntax errors in the
+same compile; error placeholders bind to the `Error` type, which suppresses
+cascading diagnostics (see section 3).
 
 ### 4.4 Binding and type checking
 
@@ -168,12 +181,36 @@ Symbols and types:
 
 Type checking is **bidirectional** where the spec requires it: binding an
 expression takes an optional *expected type*, which only affects unsuffixed
-numeric literals (spec §4/§7). Concretely: the annotated type of a `let`, the
-target of an assignment, the function's return type, a parameter's type, and
-the type of the *other* operand of a binary operator each provide the expected
-type; everything else is bottom-up synthesis with exact-type matching (no
-implicit conversions). Literal range checking happens here, including the
-unsigned-magnitude rule under unary `-`.
+numeric literals (spec §4/§7); everything else is bottom-up synthesis with
+exact-type matching (no implicit conversions).
+
+Because a literal's expectation can flow through nested expressions
+(`let x: i32 = (1 + 2) * 3;` must type every literal as `i32`), the rule is
+made deterministic with a *pending* numeric type rather than ad-hoc lookahead:
+
+- An unsuffixed integer (resp. floating-point) literal initially binds as
+  `PendingInt` (`PendingFloat`), keeping its raw text.
+- Unary `-`, parentheses, and the arithmetic operators propagate pendingness:
+  if both operands are pending, the result stays pending; if exactly one
+  operand has a concrete numeric type, that type becomes the expected type of
+  the pending side — resolving its literals recursively — and the operator is
+  then checked as usual. So `1 + 2i32` and `(1 + 2) + 3i32` are both `i32`.
+- A *forcing context* resolves a pending expression to a concrete type: a
+  `let` type annotation, the assignment target's type, the declared return
+  type at `return`, a call argument's parameter type, an explicit-conversion
+  operand, the concrete-typed other side of a comparison, and positions that
+  require a fixed type (`for` range endpoints force `i64`). Where no forcing
+  context supplies a type — e.g. `let a = 1 + 2;` or a bare
+  `print(1 + 2);` — the defaults apply: `i64` for integers, `f64` for floats.
+- Resolution is the moment of range checking (including the
+  unsigned-magnitude rule under unary `-`): `let x: i32 = 3000000000;` errors
+  here, not in the lexer or parser.
+
+The resolution order is fixed and purely local — no unification or global
+inference — which matches spec §7's "the default literal type is used when a
+unique expected type cannot be determined." This machinery belongs to the
+*first* binder milestone (section 6, step 4): even
+`fn main() -> i32 { return 0; }` depends on it.
 
 Other checks owned by this stage:
 
@@ -210,13 +247,42 @@ keeping its SRM approach. Structure:
    - Locals: each `LocalSymbol` gets a slot in the method's locals signature.
      Slots are assigned per function (no reuse across sibling scopes in v0.1 —
      simpler, and the JIT does not care).
-   - Control flow lowers directly to labels and branches: `if`/`else`,
-     `while` (test at top, back-edge branch), and `for` lowered to
-     "evaluate start/end once into temps, loop while `i <= / < end`" per spec
-     §9.3. `break`/`continue` branch to the innermost loop's exit/continue
-     labels, tracked on a stack during the walk. No separate lowering pass —
-     the language is small enough to lower inline; introduce a lowering stage
-     only if this walk grows unwieldy.
+   - Control flow lowers directly to labels and branches: `if`/`else` and
+     `while` (test at top, back-edge branch) are standard. `break`/`continue`
+     branch to the innermost loop's exit/continue labels, tracked on a stack
+     during the walk. No separate lowering pass — the language is small
+     enough to lower inline; introduce a lowering stage only if this walk
+     grows unwieldy.
+   - **Range `for` must never increment past the endpoint.** Endpoints are
+     `i64` and evaluated once into temps (spec §9.3), so
+     `for i in start..=end` with `end == i64.MaxValue` must run the body for
+     `MaxValue` and then terminate — a naive
+     `while (i <= end) { body; i += 1; }` instead overflows (checked) or
+     wraps into an infinite loop (unchecked) after the last iteration. The
+     half-open form may use the naive shape safely, because the body only
+     runs when `i < end`, so `i + 1` cannot overflow:
+
+     ```text
+     ..   :  i = start; goto TEST
+             BODY: body            // continue → INC, break → EXIT
+             INC:  i = i + 1       // safe: i < end here
+             TEST: if i < end goto BODY
+             EXIT:
+     ```
+
+     The closed form checks the endpoint *after the body, before the
+     increment*, and `continue` targets that check — never the increment:
+
+     ```text
+     ..=  :  i = start; if i > end goto EXIT
+             BODY: body            // continue → CHECK, break → EXIT
+             CHECK: if i == end goto EXIT
+             i = i + 1             // safe: i < end here
+             goto BODY
+             EXIT:
+     ```
+
+     Both increments are provably non-overflowing, so they emit plain `add`.
    - Short-circuit `&&`/`||` lower to branches (no `and`/`or` on bools with
      side-effecting operands).
    - Checked integer arithmetic uses `add.ovf`/`sub.ovf`/`mul.ovf` (spec §11);
@@ -224,7 +290,10 @@ keeping its SRM approach. Structure:
      behavior. Numeric conversions use `conv.ovf.*` for float→int and
      int→smaller-int (runtime error on out-of-range/NaN per spec §7) and plain
      `conv.*` where no check is needed.
-   - String concatenation calls `String.Concat`; `string(value)` and `print`
+   - String `==` lowers to a call to the static
+     `string.Equals(string, string)` — **ordinal content equality** per spec
+     §8.2 — and `!=` to its negation; never to reference equality via `ceq`.
+     String concatenation calls `String.Concat`; `string(value)` and `print`
      must be **culture-invariant** (spec §10.1), so numeric-to-string uses the
      invariant-culture .NET APIs, not bare `ToString()`.
    - **`maxStack` is computed, not guessed**: the walk tracks the simulated
@@ -232,23 +301,35 @@ keeping its SRM approach. Structure:
      why relying on the tiny-header default is a trap).
 3. **Assembly assembly** — metadata tables, entry-point wiring (a `void main`
    still yields exit code 0; an `i32 main`'s return value is the exit code),
-   `ManagedPEBuilder`, plus the same side files the experiment writes:
-   `runtimeconfig.json` and the POSIX/Windows launchers. The `--aot` path via
-   `NativeAotPublisher` can be offered on `arith build` later; it consumes the
-   same IL.
+   and `ManagedPEBuilder`. The emitter's product is an **in-memory PE image**
+   inside an `EmitResult` (section 4.6); it does not touch the file system.
+   Writing `<name>.dll`, `runtimeconfig.json`, and the POSIX/Windows
+   launchers is the CLI artifact writer's job, and a future `--aot` mode
+   packages the same `EmitResult` bytes via `NativeAotPublisher` — so there
+   is exactly one IL-generation path.
 
 ### 4.6 Compilation facade and CLI
 
 ```csharp
-var compilation = Compilation.Parse(sourceText);      // lex + parse + bind
-if (compilation.Diagnostics.HasErrors) { print them; return 1; }
-compilation.Emit(outputDirectory, assemblyName);      // build
+SyntaxTree syntaxTree = SyntaxTree.Parse(sourceText);       // lex + parse only
+Compilation compilation = Compilation.Create(syntaxTree);   // bind
+EmitResult result = compilation.Emit(assemblyName);
+// EmitResult: Success, Diagnostics (all stages), PE image bytes when Success
 ```
 
+`SyntaxTree.Parse` stops at syntax (as the name promises), `Compilation` owns
+semantics, and `Emit` returns the PE image as bytes plus the accumulated
+diagnostics instead of writing files. The compiler library never touches the
+output directory; a CLI-side **artifact writer** turns an `EmitResult` into
+on-disk artifacts, and every packaging mode consumes the same bytes:
+
 - `arith build <file.arith> [-o <dir>]` — compile; on failure print each
-  diagnostic as `file:line:col: error ARITHxxxx: message` and exit 1.
+  diagnostic as `file:line:col: error ARITHxxxx: message` and exit 1; on
+  success write `<name>.dll`, `<name>.runtimeconfig.json`, and the launchers.
 - `arith run <file.arith>` — build into a temp/cache directory, then execute
   via the `dotnet` host (reusing `ProcessRunner`), forwarding the exit code.
+- A future `arith build --aot` hands the same `EmitResult` bytes to
+  `NativeAotPublisher`: AOT is packaging, not a second emission path.
 - `arith experiment build-fib-command` remains until the real pipeline covers
   it, then can be retired.
 
@@ -269,7 +350,10 @@ compilation.Emit(outputDirectory, assemblyName);      // build
   `CliRunner`/`ProcessRunner`. Cover the runtime-error contract too (overflow,
   division by zero, bad conversions → nonzero exit, message on stderr).
 - Spec §11's evaluation-order guarantees get targeted end-to-end tests
-  (side-effecting call order in arguments and operands).
+  (side-effecting call order in arguments and operands), and so does the
+  closed-range endpoint rule — e.g.
+  `for i in (i64.MaxValue - 2)..=i64.MaxValue` (spelled with literals) must
+  run exactly three iterations and terminate.
 
 ## 6. Implementation order
 
@@ -283,13 +367,16 @@ the riskiest part and should not wait until last:
 3. **AST + parser** — complete grammar, minimal (sync-point) error recovery,
    with tests.
 4. **Binder, subset**: function tables, locals, `i64`/`i32` arithmetic,
-   `let`, `return`, calls, `print`.
+   `let`, `return`, calls, `print` — including the pending-literal
+   expected-type machinery of section 4.4, which even
+   `fn main() -> i32 { return 0; }` needs.
 5. **Emitter for that subset + `arith build`/`run`** → first `.arith` file
    runs end to end.
 6. **Control flow**: `if`/`while`/`for`/`break`/`continue`, logical operators,
    definite-return analysis.
-7. **Remaining types and conversions**: `bool`/`f32`/`f64`/`string` rules,
-   explicit conversions, string concatenation, literal expected-type rules.
+7. **Remaining types and conversions**: `bool`/`f32`/`f64`/`string` rules
+   (extending the pending-literal machinery to floats), explicit conversions,
+   string concatenation and ordinal equality.
 8. **Hardening**: diagnostics polish, spec-coverage test sweep, README update,
    retire the experiment command.
 
