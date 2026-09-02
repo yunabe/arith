@@ -339,12 +339,17 @@ public sealed class BinderTests
         Assert.Equal([expectedCode], Codes(compilation));
     }
 
-    [Fact]
-    public void VoidCallAsOperand_ReportsTheOperator()
+    [Theory]
+    [InlineData("fn g() { } fn main() { let x = g() + 1; }")]
+    [InlineData("fn g() { } fn main() { let x = 1 + g(); }")]
+    [InlineData("fn g() { } fn main() { let x = -g(); }")]
+    public void VoidCallAsOperand_HasNoValuePointedAtTheCall(string source)
     {
-        Compilation compilation = Compile("fn g() { } fn main() { let x = g() + 1; }");
+        Compilation compilation = Compile(source);
 
-        Assert.Equal(["ARITH3010"], Codes(compilation));
+        Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
+        Assert.Equal("ARITH3017", diagnostic.Code);
+        Assert.Equal("g()", compilation.SyntaxTree.Text.ToString(diagnostic.Span));
     }
 
     [Theory]

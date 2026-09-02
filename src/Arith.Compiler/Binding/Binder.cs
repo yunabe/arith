@@ -411,6 +411,12 @@ public sealed class Binder
             return new BoundErrorExpression();
         }
 
+        if (operand.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Operand.Span);
+            return new BoundErrorExpression();
+        }
+
         if (!operand.Type.IsNumeric)
         {
             _diagnostics.Report(
@@ -448,6 +454,26 @@ public sealed class Binder
         BoundExpression left = BindExpression(syntax.Left, expected);
         BoundExpression right = BindExpression(syntax.Right, expected);
         if (left.Type.IsError || right.Type.IsError)
+        {
+            return new BoundErrorExpression();
+        }
+
+        // A void operand's primary problem is the missing value, not the
+        // operator; report it at the operand, like every other value context.
+        bool hasVoidOperand = false;
+        if (left.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Left.Span);
+            hasVoidOperand = true;
+        }
+
+        if (right.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Right.Span);
+            hasVoidOperand = true;
+        }
+
+        if (hasVoidOperand)
         {
             return new BoundErrorExpression();
         }
