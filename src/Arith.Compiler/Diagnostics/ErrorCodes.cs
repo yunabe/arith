@@ -82,6 +82,12 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor ExpressionHasNoValue =
         new("ARITH3017", "expression does not produce a value");
 
+    public static readonly DiagnosticDescriptor LoopVariableReassigned =
+        new("ARITH3018", "loop variable '{0}' cannot be reassigned");
+
+    public static readonly DiagnosticDescriptor BreakOrContinueOutsideLoop =
+        new("ARITH3019", "'{0}' can only be used inside a loop");
+
     // Temporary code for constructs the staged implementation has not
     // reached yet (design §6); every use disappears by the end of step 7.
     public static readonly DiagnosticDescriptor NotYetImplemented =

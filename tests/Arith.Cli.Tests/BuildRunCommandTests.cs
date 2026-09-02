@@ -180,6 +180,198 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_ReadmeExampleProgram_ProducesTheDocumentedOutput()
+    {
+        string source = WriteSource("example.arith", """
+            fn sum_range(start: i64, end: i64) -> i64 {
+                let total = 0;
+
+                for i in start..end {
+                    total += i;
+                }
+
+                return total;
+            }
+
+            fn main() -> i32 {
+                let result = sum_range(1, 11);
+
+                if result > 50 {
+                    print("large:");
+                    print(result);
+                } else {
+                    print("small:");
+                    print(result);
+                }
+
+                return 0;
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["large:", "55"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_RecursiveFibonacci_Terminates()
+    {
+        string source = WriteSource("fib.arith", """
+            fn fib(n: i64) -> i64 {
+                if n < 2 {
+                    return 1;
+                }
+                return fib(n - 1) + fib(n - 2);
+            }
+
+            fn main() {
+                print(fib(10));
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["89"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_WhileWithBreakAndContinue_LoopsCorrectly()
+    {
+        string source = WriteSource("loops.arith", """
+            fn main() {
+                let i = 0;
+                while true {
+                    i += 1;
+                    if i > 6 {
+                        break;
+                    }
+                    if i % 2 == 0 {
+                        continue;
+                    }
+                    print(i);
+                }
+                print("done");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["1", "3", "5", "done"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_ClosedRangeAtI64Max_RunsThreeIterationsAndTerminates()
+    {
+        // The design §4.5 endpoint rule end to end: a closed range ending at
+        // i64::MAX must not increment past the endpoint.
+        string source = WriteSource("maxrange.arith", """
+            fn main() {
+                for i in (9223372036854775807 - 2)..=9223372036854775807 {
+                    print(i - 9223372036854775805);
+                }
+                print("survived");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["0", "1", "2", "survived"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_EmptyAndInclusiveRanges_IterateThePromisedCounts()
+    {
+        string source = WriteSource("ranges.arith", """
+            fn main() {
+                for i in 5..5 { print(i); }
+                for i in 7..3 { print(i); }
+                for i in 0..=2 { print(i); }
+                print("end");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["0", "1", "2", "end"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_ShortCircuit_SkipsTheRightOperand()
+    {
+        // Spec §8.3: && and || short-circuit; side() must not run.
+        string source = WriteSource("shortcircuit.arith", """
+            fn side() -> bool {
+                print("side effect");
+                return true;
+            }
+
+            fn main() {
+                print(false && side());
+                print(true || side());
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["False", "True"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_FloatComparisons_FollowIeee754()
+    {
+        // Spec §8.2: NaN compares false with everything, including itself.
+        string source = WriteSource("nan.arith", """
+            fn main() {
+                let nan = 0.0 / 0.0;
+                print(nan);
+                print(nan == nan);
+                print(nan <= nan);
+                print(1.5 <= 1.5);
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["NaN", "False", "False", "True"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_StringEquality_ComparesContents()
+    {
+        // Behavioral smoke test only: every string here comes from an
+        // interned ldstr, so this run could not tell string.Equals from
+        // reference equality. EmitterTests.StringEquality_CallsStringEquals
+        // pins the actual lowering by inspecting the IL.
+        string source = WriteSource("streq.arith", """
+            fn label(flag: bool) -> string {
+                if flag {
+                    return "yes";
+                }
+                return "no";
+            }
+
+            fn main() {
+                print(label(true) == "yes");
+                print(label(false) != "no");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["True", "False"], Lines(result.Output));
+    }
+
+    [Fact]
     public void Build_WritesRunnableArtifacts()
     {
         string source = WriteSource("hello.arith", "fn main() { print(\"hello from arith\"); }");

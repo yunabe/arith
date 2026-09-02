@@ -166,12 +166,6 @@ public sealed class BinderTests
     }
 
     [Theory]
-    [InlineData("if true { }", "'if'")]
-    [InlineData("while true { }", "'while'")]
-    [InlineData("for i in 0..10 { }", "'for'")]
-    [InlineData("let x = 1 < 2;", "operator '<'")]
-    [InlineData("let x = true && false;", "operator '&&'")]
-    [InlineData("let x = !true;", "operator '!'")]
     [InlineData("let x = i64(1);", "explicit conversions")]
     public void NotYetImplementedConstruct_ReportsArith3901(string body, string subject)
     {
@@ -180,6 +174,101 @@ public sealed class BinderTests
         Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
         Assert.Equal("ARITH3901", diagnostic.Code);
         Assert.Contains(subject, diagnostic.Message, StringComparison.Ordinal);
+    }
+
+    // ---- Control flow and boolean operators (design §6 step 6) ----------
+
+    [Theory]
+    [InlineData("let b = 1 < 2;", "bool")]
+    [InlineData("let b = 1.5 >= 0.5;", "bool")]
+    [InlineData("let b = 1 == 2;", "bool")]
+    [InlineData("let b = true != false;", "bool")]
+    [InlineData("let b = \"a\" == \"b\";", "bool")]
+    [InlineData("let b = true && false || true;", "bool")]
+    [InlineData("let b = !true;", "bool")]
+    public void BooleanOperators_ProduceBool(string letStatement, string expectedType)
+    {
+        Assert.Equal(expectedType, LetType(letStatement));
+    }
+
+    [Fact]
+    public void ComparisonOperand_ResolvesPendingFromTheOtherSide()
+    {
+        // Spec §7: the other operand of a binary operator is an expected
+        // type — for comparisons too.
+        Compilation compilation = CompileMain("let b = 1 < 2i32;");
+
+        Assert.Empty(compilation.Diagnostics);
+        BoundLetStatement let =
+            Assert.IsType<BoundLetStatement>(FunctionBody(compilation, "main").Statements[0]);
+        BoundBinaryExpression comparison = Assert.IsType<BoundBinaryExpression>(let.Initializer);
+        Assert.Same(ArithType.I32, comparison.Left.Type);
+        Assert.Same(ArithType.Bool, comparison.Type);
+    }
+
+    [Theory]
+    [InlineData("if 1 { }", "ARITH3009")]                      // Condition must be bool.
+    [InlineData("while 1 + 2 { }", "ARITH3009")]
+    [InlineData("let b = 1 < 2.0;", "ARITH3010")]              // Categories never cross.
+    [InlineData("let b = 1i32 < 1i64;", "ARITH3010")]
+    [InlineData("let b = \"a\" < \"b\";", "ARITH3010")]        // Strings support == / != only.
+    [InlineData("let b = true < false;", "ARITH3010")]
+    [InlineData("let b = 1 && true;", "ARITH3010")]            // Logical operators need bool.
+    [InlineData("let b = !1;", "ARITH3011")]
+    [InlineData("for i in 0i32..10 { }", "ARITH3009")]         // Endpoints must be i64.
+    [InlineData("for i in 0..1.5 { }", "ARITH3009")]
+    [InlineData("break;", "ARITH3019")]
+    [InlineData("continue;", "ARITH3019")]
+    [InlineData("for i in 0..10 { i = 1; }", "ARITH3018")]     // Loop variable is read-only.
+    [InlineData("for i in 0..10 { i += 1; }", "ARITH3018")]
+    public void InvalidControlFlow_ReportsExactlyOneDiagnostic(string body, string expectedCode)
+    {
+        Compilation compilation = CompileMain(body);
+
+        Assert.Equal([expectedCode], Codes(compilation));
+    }
+
+    [Fact]
+    public void LoopVariable_IsScopedToTheLoop()
+    {
+        Compilation compilation = CompileMain("for i in 0..10 { } print(i);");
+
+        Assert.Equal(["ARITH3005"], Codes(compilation));
+    }
+
+    [Fact]
+    public void LoopVariable_CanBeShadowedInTheBody()
+    {
+        // The body block is an inner scope relative to the loop variable.
+        Compilation compilation = CompileMain("for i in 0..10 { let i = true; print(i); }");
+
+        Assert.Empty(compilation.Diagnostics);
+    }
+
+    [Fact]
+    public void BreakInsideNestedLoop_BindsToTheLoop()
+    {
+        Compilation compilation = CompileMain(
+            "while true { for i in 0..10 { break; } continue; }");
+
+        Assert.Empty(compilation.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("fn f() -> i64 { if c() { return 1; } else { return 2; } } fn c() -> bool { return true; } fn main() { }")]
+    [InlineData("fn f() -> i64 { if c() { return 1; } return 2; } fn c() -> bool { return true; } fn main() { }")]
+    public void BranchesThatAlwaysReturn_SatisfyDefiniteReturn(string source)
+    {
+        Assert.Empty(Compile(source).Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("fn f() -> i64 { if c() { return 1; } } fn c() -> bool { return true; } fn main() { }")]
+    [InlineData("fn f() -> i64 { while c() { return 1; } } fn c() -> bool { return true; } fn main() { }")]
+    [InlineData("fn f() -> i64 { for i in 0..10 { return 1; } } fn main() { }")]
+    public void BranchesThatMayNotReturn_ReportArith3016(string source)
+    {
+        Assert.Equal(["ARITH3016"], Codes(Compile(source)));
     }
 
     [Fact]
@@ -394,14 +483,13 @@ public sealed class BinderTests
     }
 
     [Fact]
-    public void NotYetImplementedStatement_DoesNotBindItsChildren()
+    public void ControlFlowStatement_BindsItsChildren()
     {
-        // Pins current staging behavior: an unimplemented statement reports
-        // only ARITH3901 — its condition and body wait for step 6, so the
-        // undefined names inside stay undiagnosed until then.
+        // Since step 6, an if binds its condition and body, so both
+        // undefined names are diagnosed.
         Compilation compilation = CompileMain("if y { let x = z; }");
 
-        Assert.Equal(["ARITH3901"], Codes(compilation));
+        Assert.Equal(["ARITH3005", "ARITH3005"], Codes(compilation));
     }
 
     [Fact]

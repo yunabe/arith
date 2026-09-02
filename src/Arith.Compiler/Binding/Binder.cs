@@ -27,6 +27,7 @@ public sealed class Binder
     private readonly Dictionary<string, FunctionSymbol> _functions = new(StringComparer.Ordinal);
     private readonly List<Dictionary<string, VariableSymbol>> _scopes = [];
     private FunctionSymbol? _currentFunction;
+    private int _loopDepth;
 
     private Binder(DiagnosticBag diagnostics) => _diagnostics = diagnostics;
 
@@ -135,11 +136,9 @@ public sealed class Binder
         PopScope();
         _currentFunction = null;
 
-        // Minimal definite-return check for the linear step-4/5 subset: with
-        // no control flow, "every reachable path returns" (spec §5) means
-        // the body contains a return at all. Step 6 replaces this with the
-        // full analysis over branches and loops (design §4.4).
-        if (symbol.ReturnType != ArithType.Void && !symbol.ReturnType.IsError && !ContainsReturn(body))
+        // Definite-return analysis (spec §5, design §4.4): every reachable
+        // path through a value-returning function must return.
+        if (symbol.ReturnType != ArithType.Void && !symbol.ReturnType.IsError && !DefinitelyReturns(body))
         {
             _diagnostics.Report(ErrorCodes.NotAllPathsReturn, syntax.Identifier.Span, symbol.Name);
         }
@@ -147,8 +146,20 @@ public sealed class Binder
         return body;
     }
 
-    private static bool ContainsReturn(BoundBlock block) =>
-        block.Statements.Any(s => s is BoundReturnStatement || (s is BoundBlock nested && ContainsReturn(nested)));
+    /// <summary>
+    /// Conservative reachability recursion (design §4.4): a block returns
+    /// when any statement does (the rest is unreachable); an if returns only
+    /// when both branches exist and return; loop conditions are not
+    /// evaluated at compile time, so loops never count.
+    /// </summary>
+    private static bool DefinitelyReturns(BoundStatement statement) => statement switch
+    {
+        BoundReturnStatement => true,
+        BoundBlock block => block.Statements.Any(DefinitelyReturns),
+        BoundIfStatement conditional => conditional.Else is { } elseStatement
+            && DefinitelyReturns(conditional.Then) && DefinitelyReturns(elseStatement),
+        _ => false,
+    };
 
     private BoundBlock BindBlock(BlockSyntax syntax, bool pushScope = true)
     {
@@ -186,12 +197,16 @@ public sealed class Binder
                 return BindReturnStatement(ret);
             case BlockSyntax block:
                 return BindBlock(block);
-            case IfStatementSyntax or WhileStatementSyntax or ForStatementSyntax or
-                 BreakStatementSyntax or ContinueStatementSyntax:
-                // Design §6 steps 6: control flow arrives with the emitter
-                // support for branches; report once and keep binding.
-                _diagnostics.Report(ErrorCodes.NotYetImplemented, syntax.Span, StatementDescription(syntax));
-                return new BoundErrorStatement();
+            case IfStatementSyntax conditional:
+                return BindIfStatement(conditional);
+            case WhileStatementSyntax loop:
+                return BindWhileStatement(loop);
+            case ForStatementSyntax loop:
+                return BindForStatement(loop);
+            case BreakStatementSyntax:
+                return BindBreakOrContinue(syntax, "break", static () => new BoundBreakStatement());
+            case ContinueStatementSyntax:
+                return BindBreakOrContinue(syntax, "continue", static () => new BoundContinueStatement());
             case ErrorStatementSyntax:
                 return new BoundErrorStatement(); // Already diagnosed by the parser.
             default:
@@ -199,15 +214,59 @@ public sealed class Binder
         }
     }
 
-    private static string StatementDescription(StatementSyntax syntax) => syntax switch
+    private BoundIfStatement BindIfStatement(IfStatementSyntax syntax)
     {
-        IfStatementSyntax => "'if'",
-        WhileStatementSyntax => "'while'",
-        ForStatementSyntax => "'for'",
-        BreakStatementSyntax => "'break'",
-        ContinueStatementSyntax => "'continue'",
-        _ => throw new UnreachableException($"unhandled statement type {syntax.GetType().Name}"),
-    };
+        // Spec §9.1: the condition must be bool; BindExpressionWithType's
+        // mismatch diagnostic covers everything else.
+        BoundExpression condition = BindExpressionWithType(syntax.Condition, ArithType.Bool);
+        BoundBlock then = BindBlock(syntax.Then);
+        BoundStatement? elseStatement = syntax.Else is null ? null : BindStatement(syntax.Else);
+        return new BoundIfStatement(condition, then, elseStatement);
+    }
+
+    private BoundWhileStatement BindWhileStatement(WhileStatementSyntax syntax)
+    {
+        BoundExpression condition = BindExpressionWithType(syntax.Condition, ArithType.Bool);
+        _loopDepth++;
+        BoundBlock body = BindBlock(syntax.Body);
+        _loopDepth--;
+        return new BoundWhileStatement(condition, body);
+    }
+
+    private BoundForStatement BindForStatement(ForStatementSyntax syntax)
+    {
+        // Spec §9.3: both endpoints must be i64 (a forcing context for
+        // pending literals) and are evaluated before the loop.
+        BoundExpression start = BindExpressionWithType(syntax.Start, ArithType.I64);
+        BoundExpression end = BindExpressionWithType(syntax.End, ArithType.I64);
+
+        // The loop variable lives in its own scope wrapping the body, so it
+        // is visible only inside the loop and a body-level `let` may shadow
+        // it (spec §6/§9.3).
+        PushScope();
+        LocalSymbol variable = new(syntax.Identifier.Text, ArithType.I64, isReadOnly: true);
+        DeclareVariable(variable, syntax.Identifier);
+        _loopDepth++;
+        BoundBlock body = BindBlock(syntax.Body);
+        _loopDepth--;
+        PopScope();
+        return new BoundForStatement(
+            variable, start, end,
+            syntax.RangeOperator.Kind == SyntaxKind.DotDotEqualsToken, body);
+    }
+
+    private BoundStatement BindBreakOrContinue(
+        StatementSyntax syntax, string keyword, Func<BoundStatement> create)
+    {
+        if (_loopDepth == 0)
+        {
+            // Spec §9.4: using either outside a loop is a compile-time error.
+            _diagnostics.Report(ErrorCodes.BreakOrContinueOutsideLoop, syntax.Span, keyword);
+            return new BoundErrorStatement();
+        }
+
+        return create();
+    }
 
     private BoundLetStatement BindLetStatement(LetStatementSyntax syntax)
     {
@@ -243,6 +302,14 @@ public sealed class Binder
         if (variable is null)
         {
             ResolveToDefault(BindExpression(syntax.Value, expected: null));
+            return new BoundErrorStatement();
+        }
+
+        if (variable is LocalSymbol { IsReadOnly: true })
+        {
+            // Spec §9.3: the range-for loop variable cannot be reassigned.
+            _diagnostics.Report(ErrorCodes.LoopVariableReassigned, syntax.Identifier.Span, variable.Name);
+            BindExpressionWithType(syntax.Value, variable.Type);
             return new BoundErrorStatement();
         }
 
@@ -401,10 +468,28 @@ public sealed class Binder
     {
         if (syntax.OperatorToken.Kind == SyntaxKind.BangToken)
         {
-            // Logical operators arrive with control flow (design §6 step 6).
-            ResolveToDefault(BindExpression(syntax.Operand, expected: null));
-            _diagnostics.Report(ErrorCodes.NotYetImplemented, syntax.OperatorToken.Span, "operator '!'");
-            return new BoundErrorExpression();
+            // Spec §8.3: `!` accepts only bool.
+            BoundExpression boolOperand = ResolveToDefault(BindExpression(syntax.Operand, expected: null));
+            if (boolOperand.Type.IsError)
+            {
+                return new BoundErrorExpression();
+            }
+
+            if (boolOperand.Type == ArithType.Void)
+            {
+                _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Operand.Span);
+                return new BoundErrorExpression();
+            }
+
+            if (boolOperand.Type != ArithType.Bool)
+            {
+                _diagnostics.Report(
+                    ErrorCodes.InvalidUnaryOperator, syntax.OperatorToken.Span, "!", boolOperand.Type);
+                return new BoundErrorExpression();
+            }
+
+            return new BoundUnaryExpression(
+                BoundUnaryOperatorKind.LogicalNegation, boolOperand, ArithType.Bool);
         }
 
         // Spec §4.2: an integer literal directly beneath unary `-` is
@@ -443,29 +528,30 @@ public sealed class Binder
 
     private BoundExpression BindBinaryExpression(BinaryExpressionSyntax syntax, ArithType? expected)
     {
-        BoundBinaryOperatorKind? kind = syntax.OperatorToken.Kind switch
+        BoundBinaryOperatorKind kind = syntax.OperatorToken.Kind switch
         {
             SyntaxKind.PlusToken => BoundBinaryOperatorKind.Addition,
             SyntaxKind.MinusToken => BoundBinaryOperatorKind.Subtraction,
             SyntaxKind.StarToken => BoundBinaryOperatorKind.Multiplication,
             SyntaxKind.SlashToken => BoundBinaryOperatorKind.Division,
             SyntaxKind.PercentToken => BoundBinaryOperatorKind.Remainder,
-            _ => null,
+            SyntaxKind.LessToken => BoundBinaryOperatorKind.Less,
+            SyntaxKind.LessEqualsToken => BoundBinaryOperatorKind.LessOrEqual,
+            SyntaxKind.GreaterToken => BoundBinaryOperatorKind.Greater,
+            SyntaxKind.GreaterEqualsToken => BoundBinaryOperatorKind.GreaterOrEqual,
+            SyntaxKind.EqualsEqualsToken => BoundBinaryOperatorKind.Equals,
+            SyntaxKind.BangEqualsToken => BoundBinaryOperatorKind.NotEquals,
+            SyntaxKind.AmpersandAmpersandToken => BoundBinaryOperatorKind.LogicalAnd,
+            SyntaxKind.PipePipeToken => BoundBinaryOperatorKind.LogicalOr,
+            _ => throw new UnreachableException($"unhandled binary operator {syntax.OperatorToken.Kind}"),
         };
-        if (kind is null)
-        {
-            // Comparison, equality, and logical operators arrive with
-            // control flow (design §6 steps 6–7).
-            ResolveToDefault(BindExpression(syntax.Left, expected: null));
-            ResolveToDefault(BindExpression(syntax.Right, expected: null));
-            _diagnostics.Report(
-                ErrorCodes.NotYetImplemented, syntax.OperatorToken.Span,
-                $"operator '{syntax.OperatorToken.Text}'");
-            return new BoundErrorExpression();
-        }
 
-        BoundExpression left = BindExpression(syntax.Left, expected);
-        BoundExpression right = BindExpression(syntax.Right, expected);
+        // An outer expected type applies to arithmetic operands only — a
+        // condition's bool expectation must not leak into the numeric sides
+        // of a comparison.
+        ArithType? operandExpected = IsArithmetic(kind) ? expected : null;
+        BoundExpression left = BindExpression(syntax.Left, operandExpected);
+        BoundExpression right = BindExpression(syntax.Right, operandExpected);
 
         // A void operand's primary problem is the missing value, not the
         // operator; report it at the operand, like every other value
@@ -490,24 +576,31 @@ public sealed class Binder
         }
 
         // Design §4.4: a concrete operand of the same category is the
-        // expected type of a pending sibling; categories never cross.
-        if (left.Type.IsPending && !right.Type.IsPending && left.Type.CanResolveTo(right.Type))
+        // expected type of a pending sibling; categories never cross. This
+        // applies to comparisons and equality too (spec §7: "the other
+        // operand of a binary operator").
+        if (!IsLogical(kind))
         {
-            left = ResolvePending(left, right.Type);
-        }
-        else if (right.Type.IsPending && !left.Type.IsPending && right.Type.CanResolveTo(left.Type))
-        {
-            right = ResolvePending(right, left.Type);
-        }
-        else if (left.Type.IsPending && right.Type.IsPending && left.Type == right.Type
-            && IsArithmeticOperandType(kind.Value, left.Type))
-        {
-            // Both sides stay pending: the whole operation is pending.
-            return new BoundBinaryExpression(kind.Value, left, right, left.Type);
+            if (left.Type.IsPending && !right.Type.IsPending && left.Type.CanResolveTo(right.Type))
+            {
+                left = ResolvePending(left, right.Type);
+            }
+            else if (right.Type.IsPending && !left.Type.IsPending && right.Type.CanResolveTo(left.Type))
+            {
+                right = ResolvePending(right, left.Type);
+            }
+            else if (IsArithmetic(kind) && left.Type.IsPending && right.Type.IsPending
+                && left.Type == right.Type && IsArithmeticOperandType(kind, left.Type))
+            {
+                // Both sides stay pending — but only for arithmetic, whose
+                // result can propagate the pendingness; a comparison result
+                // is bool, so its pending operands take their defaults below.
+                return new BoundBinaryExpression(kind, left, right, left.Type);
+            }
         }
 
-        // Mixed categories and other invalid pairs: resolve what is still
-        // pending to its default so the diagnostic names real types.
+        // Anything still pending resolves to its default so the operator
+        // check and any diagnostic see real types.
         left = ResolveToDefault(left);
         right = ResolveToDefault(right);
         if (left.Type.IsError || right.Type.IsError)
@@ -515,7 +608,22 @@ public sealed class Binder
             return new BoundErrorExpression();
         }
 
-        if (left.Type != right.Type || !IsArithmeticOperandType(kind.Value, left.Type))
+        bool validOperands = kind switch
+        {
+            _ when IsArithmetic(kind) =>
+                left.Type == right.Type && IsArithmeticOperandType(kind, left.Type),
+            // Spec §8.2: comparisons need two values of the same numeric
+            // type; == and != also accept bool and string (content equality).
+            BoundBinaryOperatorKind.Less or BoundBinaryOperatorKind.LessOrEqual or
+            BoundBinaryOperatorKind.Greater or BoundBinaryOperatorKind.GreaterOrEqual =>
+                left.Type == right.Type && left.Type.IsNumeric,
+            BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals =>
+                left.Type == right.Type
+                && (left.Type.IsNumeric || left.Type == ArithType.Bool || left.Type == ArithType.String),
+            // Spec §8.3: && and || accept only bool.
+            _ => left.Type == ArithType.Bool && right.Type == ArithType.Bool,
+        };
+        if (!validOperands)
         {
             _diagnostics.Report(
                 ErrorCodes.InvalidBinaryOperator, syntax.OperatorToken.Span,
@@ -523,8 +631,17 @@ public sealed class Binder
             return new BoundErrorExpression();
         }
 
-        return new BoundBinaryExpression(kind.Value, left, right, left.Type);
+        ArithType resultType = IsArithmetic(kind) ? left.Type : ArithType.Bool;
+        return new BoundBinaryExpression(kind, left, right, resultType);
     }
+
+    private static bool IsArithmetic(BoundBinaryOperatorKind kind) =>
+        kind is BoundBinaryOperatorKind.Addition or BoundBinaryOperatorKind.Subtraction or
+            BoundBinaryOperatorKind.Multiplication or BoundBinaryOperatorKind.Division or
+            BoundBinaryOperatorKind.Remainder;
+
+    private static bool IsLogical(BoundBinaryOperatorKind kind) =>
+        kind is BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr;
 
     /// <summary>Spec §8.1: arithmetic needs numeric operands; `%` needs integers. (String `+` arrives in step 7.)</summary>
     private static bool IsArithmeticOperandType(BoundBinaryOperatorKind kind, ArithType type) =>
