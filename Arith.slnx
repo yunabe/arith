@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Arith.Cli/Arith.Cli.csproj" />
+    <Project Path="src/Arith.Compiler/Arith.Compiler.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Arith.Cli.Tests/Arith.Cli.Tests.csproj" />
+    <Project Path="tests/Arith.Compiler.Tests/Arith.Compiler.Tests.csproj" />
   </Folder>
 </Solution>
