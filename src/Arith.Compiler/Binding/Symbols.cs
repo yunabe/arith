@@ -27,7 +27,11 @@ public sealed class ParameterSymbol(string name, ArithType type, int index) : Va
     public int Index { get; } = index;
 }
 
-public sealed class LocalSymbol(string name, ArithType type) : VariableSymbol(name, type);
+public sealed class LocalSymbol(string name, ArithType type, bool isReadOnly = false) : VariableSymbol(name, type)
+{
+    /// <summary>True for a range-for loop variable, which cannot be reassigned (spec §9.3).</summary>
+    public bool IsReadOnly { get; } = isReadOnly;
+}
 
 /// <summary>A top-level function. ReturnType is Void for a function with no `-&gt;` clause.</summary>
 public sealed class FunctionSymbol(string name, ImmutableArray<ParameterSymbol> parameters, ArithType returnType)

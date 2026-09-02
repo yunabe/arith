@@ -38,6 +38,7 @@ public sealed class Emitter
     private MemberReferenceHandle _consoleWriteLineString;
     private MemberReferenceHandle _consoleWriteLineBool;
     private MemberReferenceHandle _cultureGetInvariant;
+    private MemberReferenceHandle _stringEquals;
     private TypeReferenceHandle _objectType;
 
     private Emitter() => _bodyStream = new MethodBodyStreamEncoder(_ilStream);
@@ -152,6 +153,23 @@ public sealed class Emitter
         TypeReferenceHandle console = AddTypeReference(systemConsole, "System", "Console");
         TypeReferenceHandle cultureInfo = AddTypeReference(systemRuntime, "System.Globalization", "CultureInfo");
         TypeReferenceHandle formatProvider = AddTypeReference(systemRuntime, "System", "IFormatProvider");
+        TypeReferenceHandle stringType = AddTypeReference(systemRuntime, "System", "String");
+
+        // String == / != are ordinal content equality (spec §8.2, design
+        // §4.5): lower to the static string.Equals(string, string), never to
+        // reference equality via ceq.
+        _stringEquals = _metadata.AddMemberReference(
+            stringType,
+            _metadata.GetOrAddString("Equals"),
+            MethodSignature(
+                isInstanceMethod: false,
+                returnType: r => r.Type().Boolean(),
+                parameterCount: 2,
+                parameters: p =>
+                {
+                    p.AddParameter().Type().String();
+                    p.AddParameter().Type().String();
+                }));
 
         _consoleWriteLineString = _metadata.AddMemberReference(
             console,
@@ -328,6 +346,7 @@ public sealed class Emitter
         private readonly InstructionEncoder _il = il;
         private readonly Dictionary<LocalSymbol, int> _localSlots = [];
         private readonly Dictionary<ArithType, int> _printTemps = [];
+        private readonly List<(LabelHandle ContinueTarget, LabelHandle BreakTarget)> _loops = [];
         private int _depth;
 
         /// <summary>The type of each local slot, in slot order (lets first-come, then print temps).</summary>
@@ -409,6 +428,20 @@ public sealed class Emitter
                 case BoundPrintStatement print:
                     EmitPrint(print);
                     break;
+                case BoundIfStatement conditional:
+                    return EmitIfStatement(conditional);
+                case BoundWhileStatement loop:
+                    EmitWhileStatement(loop);
+                    break;
+                case BoundForStatement loop:
+                    EmitForStatement(loop);
+                    break;
+                case BoundBreakStatement:
+                    _il.Branch(ILOpCode.Br, _loops[^1].BreakTarget);
+                    break;
+                case BoundContinueStatement:
+                    _il.Branch(ILOpCode.Br, _loops[^1].ContinueTarget);
+                    break;
                 case BoundReturnStatement ret:
                 {
                     if (ret.Value is not null)
@@ -429,6 +462,136 @@ public sealed class Emitter
 
             Debug.Assert(_depth == 0, "the stack must be empty between statements");
             return false;
+        }
+
+        /// <summary>`cond; brfalse else; then; br end; else; end` — collapsed when there is no else.</summary>
+        private bool EmitIfStatement(BoundIfStatement conditional)
+        {
+            EmitExpression(conditional.Condition);
+            LabelHandle end = _il.DefineLabel();
+            if (conditional.Else is null)
+            {
+                _il.Branch(ILOpCode.Brfalse, end);
+                Pop();
+                EmitStatement(conditional.Then);
+                _il.MarkLabel(end);
+                return false; // Without an else, the false path always continues.
+            }
+
+            LabelHandle elseLabel = _il.DefineLabel();
+            _il.Branch(ILOpCode.Brfalse, elseLabel);
+            Pop();
+            bool thenReturned = EmitStatement(conditional.Then);
+            if (!thenReturned)
+            {
+                _il.Branch(ILOpCode.Br, end);
+            }
+
+            _il.MarkLabel(elseLabel);
+            bool elseReturned = EmitStatement(conditional.Else);
+            _il.MarkLabel(end);
+            return thenReturned && elseReturned;
+        }
+
+        /// <summary>Test-at-top loop: `br TEST; BODY: body; TEST: cond; brtrue BODY`.</summary>
+        private void EmitWhileStatement(BoundWhileStatement loop)
+        {
+            LabelHandle body = _il.DefineLabel();
+            LabelHandle test = _il.DefineLabel();
+            LabelHandle exit = _il.DefineLabel();
+            _il.Branch(ILOpCode.Br, test);
+            _il.MarkLabel(body);
+            _loops.Add((ContinueTarget: test, BreakTarget: exit));
+            EmitStatement(loop.Body);
+            _loops.RemoveAt(_loops.Count - 1);
+            _il.MarkLabel(test);
+            EmitExpression(loop.Condition);
+            _il.Branch(ILOpCode.Brtrue, body);
+            Pop();
+            _il.MarkLabel(exit);
+        }
+
+        /// <summary>
+        /// The overflow-safe range lowerings of design §4.5. Both increments
+        /// only run while `i &lt; end`, so they can never overflow and emit a
+        /// plain add; the closed form checks the endpoint after the body and
+        /// before the increment, and `continue` targets that check.
+        /// </summary>
+        private void EmitForStatement(BoundForStatement loop)
+        {
+            int variableSlot = AllocateLocal(loop.Variable);
+            int endSlot = AllocateSlot(ArithType.I64);
+
+            // Spec §9.3: endpoints evaluate once, left to right, before the loop.
+            EmitExpression(loop.Start);
+            _il.StoreLocal(variableSlot);
+            Pop();
+            EmitExpression(loop.End);
+            _il.StoreLocal(endSlot);
+            Pop();
+
+            LabelHandle body = _il.DefineLabel();
+            LabelHandle exit = _il.DefineLabel();
+            if (!loop.IsInclusive)
+            {
+                // ..  :  br TEST; BODY: body; INC: i += 1; TEST: if i < end goto BODY
+                LabelHandle test = _il.DefineLabel();
+                LabelHandle increment = _il.DefineLabel();
+                _il.Branch(ILOpCode.Br, test);
+                _il.MarkLabel(body);
+                _loops.Add((ContinueTarget: increment, BreakTarget: exit));
+                EmitStatement(loop.Body);
+                _loops.RemoveAt(_loops.Count - 1);
+                _il.MarkLabel(increment);
+                EmitVariableIncrement(variableSlot);
+                _il.MarkLabel(test);
+                _il.LoadLocal(variableSlot);
+                Push();
+                _il.LoadLocal(endSlot);
+                Push();
+                _il.Branch(ILOpCode.Blt, body);
+                Pop(2);
+            }
+            else
+            {
+                // ..= :  if i > end goto EXIT; BODY: body;
+                //        CHECK: if i == end goto EXIT; i += 1; br BODY
+                LabelHandle check = _il.DefineLabel();
+                _il.LoadLocal(variableSlot);
+                Push();
+                _il.LoadLocal(endSlot);
+                Push();
+                _il.Branch(ILOpCode.Bgt, exit);
+                Pop(2);
+                _il.MarkLabel(body);
+                _loops.Add((ContinueTarget: check, BreakTarget: exit));
+                EmitStatement(loop.Body);
+                _loops.RemoveAt(_loops.Count - 1);
+                _il.MarkLabel(check);
+                _il.LoadLocal(variableSlot);
+                Push();
+                _il.LoadLocal(endSlot);
+                Push();
+                _il.Branch(ILOpCode.Beq, exit);
+                Pop(2);
+                EmitVariableIncrement(variableSlot);
+                _il.Branch(ILOpCode.Br, body);
+            }
+
+            _il.MarkLabel(exit);
+        }
+
+        /// <summary>`i = i + 1` with a plain add — callers guarantee `i &lt; end` here.</summary>
+        private void EmitVariableIncrement(int slot)
+        {
+            _il.LoadLocal(slot);
+            Push();
+            _il.LoadConstantI8(1);
+            Push();
+            _il.OpCode(ILOpCode.Add);
+            Pop();
+            _il.StoreLocal(slot);
+            Pop();
         }
 
         private void EmitPrint(BoundPrintStatement print)
@@ -476,9 +639,13 @@ public sealed class Emitter
                 case BoundVariableExpression variable:
                     EmitVariableLoad(variable.Variable);
                     break;
+                case BoundUnaryExpression { OperatorKind: BoundUnaryOperatorKind.LogicalNegation } unary:
+                    EmitExpression(unary.Operand);
+                    EmitBooleanNegation();
+                    break;
                 case BoundUnaryExpression unary:
                 {
-                    Debug.Assert(unary.OperatorKind == BoundUnaryOperatorKind.Negation, "only negation exists");
+                    Debug.Assert(unary.OperatorKind == BoundUnaryOperatorKind.Negation, "the other kind is handled above");
                     if (unary.Type.IsInteger)
                     {
                         // Spec §11: negation is checked; IL has no neg.ovf,
@@ -506,6 +673,17 @@ public sealed class Emitter
                     break;
                 }
 
+                case BoundBinaryExpression
+                {
+                    OperatorKind: BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr,
+                } binary:
+                    EmitShortCircuit(binary);
+                    break;
+                case BoundBinaryExpression binary when binary.Type == ArithType.Bool:
+                    EmitExpression(binary.Left);
+                    EmitExpression(binary.Right);
+                    EmitComparisonOperator(binary.OperatorKind, binary.Left.Type);
+                    break;
                 case BoundBinaryExpression binary:
                     EmitExpression(binary.Left);
                     EmitExpression(binary.Right);
@@ -584,6 +762,95 @@ public sealed class Emitter
             Pop();
         }
 
+        /// <summary>
+        /// Comparison and equality over two pushed operands. `&lt;=` and `&gt;=`
+        /// negate the opposite strict comparison; on floats the negated form
+        /// uses the unordered opcode so NaN compares false either way, per
+        /// .NET IEEE 754 semantics (spec §8.2). String equality calls
+        /// string.Equals; bool and numerics use ceq.
+        /// </summary>
+        private void EmitComparisonOperator(BoundBinaryOperatorKind kind, ArithType operandType)
+        {
+            switch (kind)
+            {
+                case BoundBinaryOperatorKind.Less:
+                    _il.OpCode(ILOpCode.Clt);
+                    Pop();
+                    break;
+                case BoundBinaryOperatorKind.Greater:
+                    _il.OpCode(ILOpCode.Cgt);
+                    Pop();
+                    break;
+                case BoundBinaryOperatorKind.LessOrEqual:
+                    _il.OpCode(operandType.IsFloat ? ILOpCode.Cgt_un : ILOpCode.Cgt);
+                    Pop();
+                    EmitBooleanNegation();
+                    break;
+                case BoundBinaryOperatorKind.GreaterOrEqual:
+                    _il.OpCode(operandType.IsFloat ? ILOpCode.Clt_un : ILOpCode.Clt);
+                    Pop();
+                    EmitBooleanNegation();
+                    break;
+                case BoundBinaryOperatorKind.Equals or BoundBinaryOperatorKind.NotEquals:
+                {
+                    if (operandType == ArithType.String)
+                    {
+                        _il.Call(_emitter._stringEquals);
+                        Pop(2);
+                        Push();
+                    }
+                    else
+                    {
+                        _il.OpCode(ILOpCode.Ceq);
+                        Pop();
+                    }
+
+                    if (kind == BoundBinaryOperatorKind.NotEquals)
+                    {
+                        EmitBooleanNegation();
+                    }
+
+                    break;
+                }
+
+                default:
+                    throw new UnreachableException($"unhandled comparison operator {kind}");
+            }
+        }
+
+        /// <summary>Replaces the bool on top of the stack with its negation (`x == 0`).</summary>
+        private void EmitBooleanNegation()
+        {
+            _il.LoadConstantI4(0);
+            Push();
+            _il.OpCode(ILOpCode.Ceq);
+            Pop();
+        }
+
+        /// <summary>
+        /// Short-circuit lowering (spec §8.3): the right operand is
+        /// evaluated only when the left one does not decide the result.
+        /// </summary>
+        private void EmitShortCircuit(BoundBinaryExpression binary)
+        {
+            bool isAnd = binary.OperatorKind == BoundBinaryOperatorKind.LogicalAnd;
+            LabelHandle decided = _il.DefineLabel();
+            LabelHandle end = _il.DefineLabel();
+            EmitExpression(binary.Left);
+            _il.Branch(isAnd ? ILOpCode.Brfalse : ILOpCode.Brtrue, decided);
+            Pop();
+            EmitExpression(binary.Right);
+            _il.Branch(ILOpCode.Br, end);
+
+            // The decided path enters with one less value on the stack than
+            // the merge point; rewind the tracker before pushing the result.
+            SetDepth(_depth - 1);
+            _il.MarkLabel(decided);
+            _il.LoadConstantI4(isAnd ? 0 : 1);
+            Push();
+            _il.MarkLabel(end);
+        }
+
         private void EmitVariableLoad(VariableSymbol variable)
         {
             if (variable is ParameterSymbol parameter)
@@ -614,9 +881,16 @@ public sealed class Emitter
 
         private int AllocateLocal(LocalSymbol local)
         {
-            int slot = LocalTypes.Count;
+            int slot = AllocateSlot(local.Type);
             _localSlots.Add(local, slot);
-            LocalTypes.Add(local.Type);
+            return slot;
+        }
+
+        /// <summary>A fresh, anonymous local slot (for-loop end temps and the like).</summary>
+        private int AllocateSlot(ArithType type)
+        {
+            int slot = LocalTypes.Count;
+            LocalTypes.Add(type);
             return slot;
         }
 
@@ -624,8 +898,7 @@ public sealed class Emitter
         {
             if (!_printTemps.TryGetValue(type, out int slot))
             {
-                slot = LocalTypes.Count;
-                LocalTypes.Add(type);
+                slot = AllocateSlot(type);
                 _printTemps.Add(type, slot);
             }
 
@@ -642,6 +915,17 @@ public sealed class Emitter
         {
             _depth -= count;
             Debug.Assert(_depth >= 0, "the evaluation stack cannot underflow");
+        }
+
+        /// <summary>
+        /// Rewinds the tracker to a branch target's actual entry depth. Only
+        /// merge points inside short-circuit lowering need this; MaxStack
+        /// already accounts for the deeper path.
+        /// </summary>
+        private void SetDepth(int depth)
+        {
+            Debug.Assert(depth >= 0, "the evaluation stack cannot underflow");
+            _depth = depth;
         }
     }
 }

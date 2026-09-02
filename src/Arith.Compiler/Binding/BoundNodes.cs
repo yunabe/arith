@@ -45,6 +45,32 @@ public sealed record BoundReturnStatement(BoundExpression? Value) : BoundStateme
 /// </summary>
 public sealed record BoundPrintStatement(BoundExpression Argument) : BoundStatement;
 
+/// <summary>`if cond { then } [else …]`; Else is a BoundBlock or a nested BoundIfStatement.</summary>
+public sealed record BoundIfStatement(
+    BoundExpression Condition,
+    BoundBlock Then,
+    BoundStatement? Else) : BoundStatement;
+
+public sealed record BoundWhileStatement(
+    BoundExpression Condition,
+    BoundBlock Body) : BoundStatement;
+
+/// <summary>
+/// `for variable in start..end { body }` (IsInclusive selects `..=`). Start
+/// and End are i64 and evaluated once, left to right; the emitter lowers
+/// the two forms with the overflow-safe shapes of design §4.5.
+/// </summary>
+public sealed record BoundForStatement(
+    LocalSymbol Variable,
+    BoundExpression Start,
+    BoundExpression End,
+    bool IsInclusive,
+    BoundBlock Body) : BoundStatement;
+
+public sealed record BoundBreakStatement : BoundStatement;
+
+public sealed record BoundContinueStatement : BoundStatement;
+
 /// <summary>Placeholder for a statement that could not be bound; already diagnosed.</summary>
 public sealed record BoundErrorStatement : BoundStatement;
 
@@ -86,13 +112,29 @@ public sealed record BoundErrorExpression() : BoundExpression(ArithType.Error);
 public enum BoundUnaryOperatorKind
 {
     Negation,
+    LogicalNegation,
 }
 
 public enum BoundBinaryOperatorKind
 {
+    // Arithmetic: numeric operands, result of the operand type.
     Addition,
     Subtraction,
     Multiplication,
     Division,
     Remainder,
+
+    // Comparison: numeric operands, bool result.
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+
+    // Equality: numeric, bool, or string operands; bool result.
+    Equals,
+    NotEquals,
+
+    // Logical: bool operands, bool result, short-circuit evaluation.
+    LogicalAnd,
+    LogicalOr,
 }
