@@ -53,7 +53,18 @@ internal static partial class CompilerCommands
             return 1;
         }
 
-        foreach (string path in ArtifactWriter.Write(resolvedOutputDirectory, name, result.PeImage))
+        IReadOnlyList<string> written;
+        try
+        {
+            written = ArtifactWriter.Write(resolvedOutputDirectory, name, result.PeImage);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            error.WriteLine($"error: cannot write artifacts to '{resolvedOutputDirectory}': {exception.Message}");
+            return 1;
+        }
+
+        foreach (string path in written)
         {
             output.WriteLine($"wrote {path}");
         }
@@ -84,7 +95,16 @@ internal static partial class CompilerCommands
             Path.GetTempPath(), "arith-run-" + Guid.NewGuid().ToString("N"));
         try
         {
-            ArtifactWriter.Write(temporaryDirectory, name, result.PeImage);
+            try
+            {
+                ArtifactWriter.Write(temporaryDirectory, name, result.PeImage);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                error.WriteLine($"error: cannot write artifacts to '{temporaryDirectory}': {exception.Message}");
+                return 1;
+            }
+
             ProcessStartInfo startInfo = new("dotnet", [Path.Combine(temporaryDirectory, name + ".dll")]);
             ProcessResult processResult = ProcessRunner.Run(startInfo);
             output.Write(processResult.Output);
@@ -97,7 +117,7 @@ internal static partial class CompilerCommands
             {
                 Directory.Delete(temporaryDirectory, recursive: true);
             }
-            catch (IOException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 // Best effort; the OS reclaims temp files eventually.
             }

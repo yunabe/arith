@@ -228,6 +228,22 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Build_OutputDirectoryIsAFile_FailsWithoutAStackTrace()
+    {
+        // The reviewer's case: `arith build prog.arith -o <existing file>`
+        // must produce a concise CLI error, not an unhandled IOException.
+        string source = WriteSource("prog.arith", "fn main() { }");
+        string blocker = Path.Combine(_directory, "blocker");
+        File.WriteAllText(blocker, "");
+
+        CliResult result = CliRunner.Run("build", source, "-o", blocker);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("cannot write artifacts to", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Unhandled exception", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Run_HyphenatedProgramName_IsAccepted()
     {
         string source = WriteSource("my-app_2.arith", "fn main() { print(\"ok\"); }");
