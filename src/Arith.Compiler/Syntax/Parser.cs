@@ -67,6 +67,19 @@ public sealed class Parser
             return Consume();
         }
 
+        // Bad tokens were already reported by the lexer: drop the whole run
+        // without a second diagnostic (cascade suppression) and let the
+        // expected token match if it sits right behind, as in `let @x = 1;`.
+        if (Current.Kind == SyntaxKind.BadToken)
+        {
+            while (Current.Kind == SyntaxKind.BadToken)
+            {
+                Consume();
+            }
+
+            return Current.Kind == kind ? Consume() : MissingToken(kind);
+        }
+
         ReportUnexpected(Describe(kind));
         return MissingToken(kind);
     }
@@ -135,7 +148,12 @@ public sealed class Parser
                     break;
                 }
 
-                Consume();
+                Token comma = Consume();
+                if (Current.Kind == SyntaxKind.CloseParenToken)
+                {
+                    _diagnostics.Report(ErrorCodes.TrailingComma, comma.Span);
+                    break;
+                }
             }
         }
 
@@ -270,7 +288,12 @@ public sealed class Parser
     private ReturnStatementSyntax ParseReturnStatement()
     {
         int start = Consume().Span.Start;
-        ExpressionSyntax? value = Current.Kind == SyntaxKind.SemicolonToken ? null : ParseExpression();
+
+        // Anything that cannot start an expression — ';', '}', EOF, a
+        // statement keyword — selects the valueless form; the MatchToken
+        // below then reports the missing ';' as the only diagnostic instead
+        // of forcing a value error.
+        ExpressionSyntax? value = CanStartExpression(Current.Kind) ? ParseExpression() : null;
         MatchToken(SyntaxKind.SemicolonToken);
         return new ReturnStatementSyntax(value, SpanFrom(start));
     }
@@ -467,8 +490,9 @@ public sealed class Parser
 
     /// <summary>
     /// Reports the token that cannot start an expression. Tokens that likely
-    /// close the enclosing production (`;` `)` `}` `,` EOF) stay put for it
-    /// to consume; anything else is dropped to guarantee progress.
+    /// belong to the enclosing production — closers (`;` `)` `}` `,` EOF),
+    /// a body-opening `{`, and the range operators — stay put for it to
+    /// consume; anything else is dropped to guarantee progress.
     /// </summary>
     private ErrorExpressionSyntax ParseErrorExpression()
     {
@@ -479,7 +503,8 @@ public sealed class Parser
         }
 
         if (Current.Kind is not (SyntaxKind.SemicolonToken or SyntaxKind.CloseParenToken or
-            SyntaxKind.CloseBraceToken or SyntaxKind.CommaToken or SyntaxKind.EndOfFileToken))
+            SyntaxKind.CloseBraceToken or SyntaxKind.CommaToken or SyntaxKind.EndOfFileToken or
+            SyntaxKind.OpenBraceToken or SyntaxKind.DotDotToken or SyntaxKind.DotDotEqualsToken))
         {
             span = Consume().Span;
         }
@@ -504,7 +529,12 @@ public sealed class Parser
                     break;
                 }
 
-                Consume();
+                Token comma = Consume();
+                if (Current.Kind == SyntaxKind.CloseParenToken)
+                {
+                    _diagnostics.Report(ErrorCodes.TrailingComma, comma.Span);
+                    break;
+                }
             }
         }
 

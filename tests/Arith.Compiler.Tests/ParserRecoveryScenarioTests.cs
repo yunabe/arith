@@ -111,19 +111,43 @@ public sealed class ParserRecoveryScenarioTests
     // IDEAL: the lexer diagnostic for '@' is sufficient; consume its Bad
     // token as the malformed identifier and resume at '=' without parser
     // diagnostics cascading from the same character.
-    // TODAY: MatchToken leaves the Bad token in place, so the missing
-    // identifier, '=', and ';' each report again before the remaining
-    // assignment is skipped as another bad statement: five diagnostics for
-    // one invalid character.
+    // FIXED: matches the ideal — MatchToken drops the Bad token silently
+    // (cascade suppression), so the lexer's diagnostic stands alone and the
+    // rest of the let, initializer included, parses normally.
     [Fact]
-    public void BadTokenInIdentifierPosition_CascadesIntoParserDiagnostics()
+    public void BadTokenInIdentifierPosition_ReportsOnlyTheLexerDiagnostic()
     {
         (string[] codes, string dump) = ParseScenario("fn t() { let @ = 1; }");
 
-        string[] expectedCodes =
-            ["ARITH1001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH1001"];
         Assert.Equal(expectedCodes, codes);
-        Assert.Equal("(fn t (block (let  (error)) (error-stmt)))", dump);
+        Assert.Equal("(fn t (block (let  1)))", dump);
+    }
+
+    // A companion to the case above: when the expected token sits right
+    // behind the Bad token, MatchToken's silent drop lets it match, so
+    // `@x` recovers as the identifier `x` with only the lexer diagnostic.
+    [Fact]
+    public void BadTokenBeforeIdentifier_RecoversTheIdentifier()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let @x = 1; }");
+
+        string[] expectedCodes = ["ARITH1001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let x 1)))", dump);
+    }
+
+    // And the run-of-Bad-tokens variant: each bad character was already
+    // diagnosed by the lexer, so MatchToken drops the whole run and still
+    // recovers the identifier behind it without parser diagnostics.
+    [Fact]
+    public void ConsecutiveBadTokens_AddNoParserDiagnostics()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let @@x = 1; }");
+
+        string[] expectedCodes = ["ARITH1001", "ARITH1001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let x 1)))", dump);
     }
 
     // IDEAL: `main() {` at the top level is recognized as a function
@@ -144,17 +168,24 @@ public sealed class ParserRecoveryScenarioTests
 
     // IDEAL: one diagnostic ("expected '->' before the return type"),
     // consuming `i64` as the return type and parsing the body normally.
-    // TODAY: five diagnostics — `i64` is mistaken for the function body's
+    // TODAY: six diagnostics — `i64` is mistaken for the function body's
     // first statement and then for a conversion call, dragging the real '{'
-    // and the `return` into the wreckage before recovery finds its feet.
+    // and the `return` into the wreckage. (Adding '{' to the
+    // error-expression stop set fixed the if/for cases but leaves this '{'
+    // unconsumed to be reported one extra time — the real cure is treating
+    // `fn name() type {` as a missing '->'.)
     [Fact]
-    public void MissingArrowBeforeReturnType_CascadesIntoFiveDiagnostics()
+    public void MissingArrowBeforeReturnType_CascadesIntoSixDiagnostics()
     {
         (string[] codes, string dump) = ParseScenario("fn f() i64 { return 0; }");
 
-        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        string[] expectedCodes =
+        [
+            "ARITH2001", "ARITH2001", "ARITH2001",
+            "ARITH2001", "ARITH2001", "ARITH2001",
+        ];
         Assert.Equal(expectedCodes, codes);
-        Assert.Equal("(fn f (block (expr (call i64 (error))) (return 0)))", dump);
+        Assert.Equal("(fn f (block (expr (call i64 (error))) (error-stmt) (return 0)))", dump);
     }
 
     // IDEAL: the diagnostic points at (or near) the brace that was never
@@ -182,17 +213,40 @@ public sealed class ParserRecoveryScenarioTests
     // IDEAL: interpret `return }` as the grammar-valid valueless `return;`
     // with only its semicolon missing, so the return node has no value and a
     // single diagnostic points at the insertion site.
-    // TODAY: only an actual ';' selects the valueless form. The '}' therefore
-    // becomes a missing value expression, followed by a second diagnostic for
-    // the missing ';', and the tree records an error-valued return.
+    // FIXED: matches the ideal — a '}' after `return` selects the valueless
+    // form, and the one diagnostic is the missing ';'.
     [Fact]
-    public void MissingSemicolonAfterValuelessReturn_CreatesAnErrorValue()
+    public void MissingSemicolonAfterValuelessReturn_RecoversAsValueless()
     {
         (string[] codes, string dump) = ParseScenario("fn t() { return }");
 
-        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH2001"];
         Assert.Equal(expectedCodes, codes);
-        Assert.Equal("(fn t (block (return (error))))", dump);
+        Assert.Equal("(fn t (block (return)))", dump);
+    }
+
+    // Companions: the valueless form is chosen from the expression FIRST
+    // set, so a following statement keyword or end of file also means "no
+    // value" — the next statement survives, and only the delimiters that
+    // are genuinely absent are reported.
+    [Fact]
+    public void MissingSemicolonBeforeNextStatement_KeepsTheReturnValueless()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { return let x = 1; }");
+
+        string[] expectedCodes = ["ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (return) (let x 1)))", dump);
+    }
+
+    [Fact]
+    public void ReturnAtEndOfFile_ReportsOnlyTheMissingDelimiters()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { return");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"]; // Missing ';' and '}'.
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (return)))", dump);
     }
 
     // IDEAL: one diagnostic ("expected ';', found ','"), treating the comma
@@ -265,22 +319,23 @@ public sealed class ParserRecoveryScenarioTests
     // habit from other languages. Both deserve a targeted message.
     // TODAY: each bad quote is an "unexpected character", the string's
     // content lexes as an identifier, and the parser piles four more
-    // diagnostics on top: seven in total for one string literal.
+    // diagnostics on top: six in total for one string literal. (MatchToken's
+    // Bad-token suppression removed the seventh.)
     [Theory]
     [InlineData("fn t() { print(“hi”); }")]
     [InlineData("fn t() { print('hi'); }")]
-    public void WrongQuoteCharacters_ProduceSevenDiagnostics(string source)
+    public void WrongQuoteCharacters_ProduceSixDiagnostics(string source)
     {
         (string[] codes, string dump) = ParseScenario(source);
 
         string[] expectedCodes =
         [
-            "ARITH1001", "ARITH1001", "ARITH2001", "ARITH2001",
-            "ARITH2002", "ARITH2001", "ARITH2001",
+            "ARITH1001", "ARITH1001", "ARITH2001",
+            "ARITH2001", "ARITH2002", "ARITH2001",
         ];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal(
-            "(fn t (block (expr (call print (error))) (expr hi) (error-stmt) (error-stmt)))",
+            "(fn t (block (expr (call print (error))) (expr hi) (error-stmt)))",
             dump);
     }
 
@@ -304,15 +359,17 @@ public sealed class ParserRecoveryScenarioTests
     // '&&'?" (Arith has no bitwise operators), parsed as '&&' for recovery:
     // one diagnostic, condition intact.
     // TODAY: the lexer's Bad token truncates the condition at `a`, and the
-    // parser reports four more errors while `b { }` shreds into debris.
+    // parser reports three more errors while `b { }` shreds into debris.
+    // (MatchToken now swallows the Bad token where the then-block's '{' was
+    // expected, which removed one cascade diagnostic but not the shredding.)
     [Fact]
     public void SingleAmpersandInCondition_ShredsTheIfStatement()
     {
         (string[] codes, string dump) = ParseScenario("fn t() { if a & b { } }");
 
-        string[] expectedCodes = ["ARITH1001", "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH1001", "ARITH2002", "ARITH2001", "ARITH2001"];
         Assert.Equal(expectedCodes, codes);
-        Assert.Equal("(fn t (block (if a (block (error-stmt) (expr b) (error-stmt)))))", dump);
+        Assert.Equal("(fn t (block (if a (block (expr b) (error-stmt)))))", dump);
     }
 
     // IDEAL: `for i = 0; …` is unmistakably a C-style for; one diagnostic
@@ -370,29 +427,39 @@ public sealed class ParserRecoveryScenarioTests
 
     // IDEAL: one "trailing comma is not allowed" diagnostic and no extra
     // parameter node.
-    // TODAY: the comma makes the parser demand a whole new parameter, so
-    // one stray comma yields three diagnostics (identifier, ':', type) and
-    // a ghost `(param )` whose every token is missing.
+    // FIXED: matches the ideal — the list parsers spot a ')' right after a
+    // ',' and report ARITH2003 at the comma; no ghost parameter is created.
     [Fact]
-    public void TrailingCommaInParameterList_FabricatesAGhostParameter()
+    public void TrailingCommaInParameterList_ReportsOneTargetedDiagnostic()
     {
         (string[] codes, string dump) = ParseScenario("fn f(a: i64,) { }");
 
-        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH2003"];
         Assert.Equal(expectedCodes, codes);
-        Assert.Equal("(fn f (param a i64) (param  ) (block))", dump);
+        Assert.Equal("(fn f (param a i64) (block))", dump);
+    }
+
+    // The argument-list variant of the case above, sharing the same fix.
+    [Fact]
+    public void TrailingCommaInArgumentList_ReportsOneTargetedDiagnostic()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { f(1, 2,); }");
+
+        string[] expectedCodes = ["ARITH2003"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (expr (call f 1 2))))", dump);
     }
 
     // IDEAL: one diagnostic ("expected a condition before '{'").
-    // TODAY: two diagnostics, and only luck keeps the body: the '{' itself
-    // is consumed as the failed condition expression, after which the body
-    // statements re-attach because the *next* token starts a statement.
+    // FIXED: matches the ideal — '{' joined the error-expression stop set,
+    // so it opens the body as written and the single diagnostic is the
+    // missing condition.
     [Fact]
-    public void MissingIfCondition_ConsumesTheOpenBraceAsTheCondition()
+    public void MissingIfCondition_RecoversWithOneDiagnostic()
     {
         (string[] codes, string dump) = ParseScenario("fn t() { if { print(x); } }");
 
-        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH2001"];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal("(fn t (block (if (error) (block (expr (call print x))))))", dump);
     }
@@ -547,35 +614,35 @@ public sealed class ParserRecoveryScenarioTests
 
     // IDEAL: one diagnostic for the missing range start, leaving '..' in
     // place as the range operator and parsing `10` as the end.
-    // TODAY: the error expression consumes '..' as the missing start. The
-    // parser then also reports `10` as the missing range operator and records
-    // a fabricated operator token, although the body and next statement live.
+    // FIXED: matches the ideal — the range operators joined the
+    // error-expression stop set, so '..' survives as the operator, `10` is
+    // the end, and the loop keeps its body.
     [Fact]
-    public void MissingRangeStart_ConsumesTheRealRangeOperator()
+    public void MissingRangeStart_RecoversWithOneDiagnostic()
     {
         (string[] codes, string dump) = ParseScenario(
             "fn t() { for i in ..10 { print(i); } let y = 2; }");
 
-        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH2001"];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal(
-            "(fn t (block (for i  (error) 10 (block (expr (call print i)))) (let y 2)))",
+            "(fn t (block (for i .. (error) 10 (block (expr (call print i)))) (let y 2)))",
             dump);
     }
 
     // IDEAL: one diagnostic for the missing range end, leaving '{' to open
     // the loop body — the same delimiter-preservation principle as a missing
     // if condition, but at the second expression in a for production.
-    // TODAY: the error expression consumes '{'; ParseBlock then fabricates a
-    // replacement before `print`, adding a second diagnostic and losing the
-    // body's opening brace from the recovered structure.
+    // FIXED: matches the ideal — '{' joined the error-expression stop set,
+    // so the body opens normally and the single diagnostic is the missing
+    // end expression.
     [Fact]
-    public void MissingRangeEnd_ConsumesTheLoopOpenBrace()
+    public void MissingRangeEnd_RecoversWithOneDiagnostic()
     {
         (string[] codes, string dump) = ParseScenario(
             "fn t() { for i in 0.. { print(i); } let y = 2; }");
 
-        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        string[] expectedCodes = ["ARITH2001"];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal(
             "(fn t (block (for i .. 0 (error) (block (expr (call print i)))) (let y 2)))",
