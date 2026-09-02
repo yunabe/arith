@@ -172,6 +172,224 @@ public sealed class ParserRecoveryScenarioTests
         Assert.Equal("(fn t (block (if x (block)) (error-stmt) (let y 1)))", dump);
     }
 
+    // IDEAL: the unterminated-string diagnostic alone — everything after it
+    // on the line is inside the Bad token, so the ')' and ';' complaints are
+    // consequences, not new information.
+    // TODAY: the Bad token has eaten `);`, so the parser adds two noise
+    // diagnostics for the ')' and ';' it can no longer find. (The next line
+    // does recover cleanly.)
+    [Fact]
+    public void UnterminatedString_AddsNoiseForTheSwallowedDelimiters()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { print(\"hello);\n    let x = 1;\n}");
+
+        string[] expectedCodes = ["ARITH1002", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (expr (call print (error))) (let x 1)))", dump);
+    }
+
+    // IDEAL: the diagnostic is accurate, but a smarter recovery could notice
+    // that the comment swallowed line-start `fn` declarations and either
+    // suggest where the missing `*/` probably belongs or re-lex the
+    // remainder — and the binder should suppress its future "no main
+    // function" complaint for a file that ends inside a comment.
+    // TODAY: one correct diagnostic, and the entire program silently
+    // becomes empty.
+    [Fact]
+    public void UnterminatedBlockComment_SwallowsTheWholeProgram()
+    {
+        (string[] codes, string dump) = ParseScenario("/* TODO explain\nfn main() { return 0; }");
+
+        string[] expectedCodes = ["ARITH1004"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("", dump);
+    }
+
+    // IDEAL: one diagnostic per quote character — or one for the whole
+    // literal — saying Arith strings use straight double quotes. Smart
+    // quotes arrive via copy-paste from documents; single quotes are a
+    // habit from other languages. Both deserve a targeted message.
+    // TODAY: each bad quote is an "unexpected character", the string's
+    // content lexes as an identifier, and the parser piles four more
+    // diagnostics on top: seven in total for one string literal.
+    [Theory]
+    [InlineData("fn t() { print(“hi”); }")]
+    [InlineData("fn t() { print('hi'); }")]
+    public void WrongQuoteCharacters_ProduceSevenDiagnostics(string source)
+    {
+        (string[] codes, string dump) = ParseScenario(source);
+
+        string[] expectedCodes =
+        [
+            "ARITH1001", "ARITH1001", "ARITH2001", "ARITH2001",
+            "ARITH2002", "ARITH2001", "ARITH2001",
+        ];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (expr (call print (error))) (expr hi) (error-stmt) (error-stmt)))",
+            dump);
+    }
+
+    // IDEAL: `=` directly inside a condition is the classic C-habit slip;
+    // report "use '==' to compare, '=' is not an expression", treat it as
+    // '==', and keep the whole condition.
+    // TODAY: the condition silently truncates to `x`, and the two
+    // diagnostics complain about a '{' and a statement — neither mentions
+    // '=' vs '=='. The `print(x)` body survives only as debris.
+    [Fact]
+    public void AssignmentInCondition_NeverMentionsDoubleEquals()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { if x = 1 { print(x); } }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (if x (block (error-stmt)))))", dump);
+    }
+
+    // IDEAL: a lone '&' one character from '&&' deserves "did you mean
+    // '&&'?" (Arith has no bitwise operators), parsed as '&&' for recovery:
+    // one diagnostic, condition intact.
+    // TODAY: the lexer's Bad token truncates the condition at `a`, and the
+    // parser reports four more errors while `b { }` shreds into debris.
+    [Fact]
+    public void SingleAmpersandInCondition_ShredsTheIfStatement()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { if a & b { } }");
+
+        string[] expectedCodes = ["ARITH1001", "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (if a (block (error-stmt) (expr b) (error-stmt)))))", dump);
+    }
+
+    // IDEAL: `for i = 0; …` is unmistakably a C-style for; one diagnostic
+    // explaining Arith's range syntax (`for i in 0..10`) beats parsing the
+    // three clauses as garbage.
+    // TODAY: eight diagnostics. The `i < 10` clause becomes a statement,
+    // `i += 1` is adopted as a loop-body statement, and the real body's
+    // '{' is reported twice.
+    [Fact]
+    public void CStyleForLoop_ProducesEightDiagnostics()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { for i = 0; i < 10; i += 1 { } }");
+
+        string[] expectedCodes =
+        [
+            "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001",
+            "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001",
+        ];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (for i  (error) 0 (block (error-stmt) (expr (< i 10)) (+= i 1) (error-stmt)))))",
+            dump);
+    }
+
+    // IDEAL: one "functions cannot be nested" diagnostic (spec §5), parsing
+    // `inner` as a function anyway so its body is still checked, and
+    // keeping `outer`'s remaining statements.
+    // TODAY: `fn` in statement position is debris — four diagnostics,
+    // `inner` survives only as a phantom call expression, and the final
+    // diagnostic even blames the function's own closing '}' at top level.
+    [Fact]
+    public void NestedFunctionDeclaration_BecomesPhantomCallPlusFourDiagnostics()
+    {
+        (string[] codes, string dump) = ParseScenario("fn outer() { fn inner() { } }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn outer (block (error-stmt) (expr (call inner)) (error-stmt)))", dump);
+    }
+
+    // IDEAL: '++' is the most common habit from C-family languages; a
+    // targeted "Arith has no '++'; use 'i += 1'" costs one diagnostic.
+    // TODAY: the second '+' fails to start an expression and the first
+    // turns the statement into `i + (error)`, which then also triggers the
+    // only-calls-can-be-statements error — two diagnostics, no hint.
+    [Fact]
+    public void IncrementOperator_GetsNoTargetedSuggestion()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { i++; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2002"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (expr (+ i (error)))))", dump);
+    }
+
+    // IDEAL: one "trailing comma is not allowed" diagnostic and no extra
+    // parameter node.
+    // TODAY: the comma makes the parser demand a whole new parameter, so
+    // one stray comma yields three diagnostics (identifier, ':', type) and
+    // a ghost `(param )` whose every token is missing.
+    [Fact]
+    public void TrailingCommaInParameterList_FabricatesAGhostParameter()
+    {
+        (string[] codes, string dump) = ParseScenario("fn f(a: i64,) { }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn f (param a i64) (param  ) (block))", dump);
+    }
+
+    // IDEAL: one diagnostic ("expected a condition before '{'").
+    // TODAY: two diagnostics, and only luck keeps the body: the '{' itself
+    // is consumed as the failed condition expression, after which the body
+    // statements re-attach because the *next* token starts a statement.
+    [Fact]
+    public void MissingIfCondition_ConsumesTheOpenBraceAsTheCondition()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { if { print(x); } }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (if (error) (block (expr (call print x))))))", dump);
+    }
+
+    // IDEAL: "'else' has no matching 'if'" as the only diagnostic, skipping
+    // exactly the else block and keeping `let x = 1;`.
+    // TODAY: the statement-boundary skip swallows the else's `{ }`, but the
+    // block's '}' then closes the *function*, so `let x = 1;` is reported
+    // as top-level junk and vanishes — half the function body is lost to
+    // one stray keyword.
+    [Fact]
+    public void OrphanElse_ClosesTheFunctionEarlyAndDropsTheRest()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { else { } let x = 1; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (error-stmt)))", dump);
+    }
+
+    // IDEAL: "assignment is a statement, not an expression" (spec §8.4) at
+    // the '=', as the single diagnostic — this is exactly the C idiom the
+    // spec rules out, so the parser can name it.
+    // TODAY: the parenthesized expression closes early at `x`, and three
+    // diagnostics blame the ')', the ';', and the leftover `5)` instead of
+    // the real issue.
+    [Fact]
+    public void AssignmentUsedAsExpression_BlamesEverythingButTheAssignment()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let y = (x = 5); }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let y (paren x)) (error-stmt)))", dump);
+    }
+
+    // IDEAL: `print x;` — a name directly followed by another name — is a
+    // call missing its parentheses; one diagnostic saying so.
+    // TODAY: three diagnostics: `print` alone is not a call statement, the
+    // ';' is missing, and then `x` alone is not a call statement either.
+    [Fact]
+    public void CallWithoutParentheses_ReportsThreeUnrelatedDiagnostics()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { print x; }");
+
+        string[] expectedCodes = ["ARITH2002", "ARITH2001", "ARITH2002"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (expr print) (expr x)))", dump);
+    }
+
     // A contrast case where the current minimal recovery already behaves
     // well: an extra top-level '}' costs exactly one diagnostic and both
     // functions survive. Kept here to define the bar the cases above miss.
