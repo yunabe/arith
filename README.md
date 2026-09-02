@@ -1,5 +1,7 @@
 # Arith
 
+[![CI](https://github.com/yunabe/arith/actions/workflows/ci.yml/badge.svg)](https://github.com/yunabe/arith/actions/workflows/ci.yml)
+
 Arith is a small programming language that compiles simple arithmetic programs into executable .NET assemblies.
 
 Rather than interpreting expressions one at a time, Arith type-checks the source code and translates it into an assembly containing .NET Common Intermediate Language (CIL, commonly called IL) and metadata. The .NET runtime executes the generated code and its JIT compiler translates the IL into machine code for the target CPU.
