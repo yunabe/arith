@@ -224,6 +224,156 @@ public sealed class BinderTests
         Assert.Equal([expectedCode], Codes(compilation));
     }
 
+    // ---- Error accumulation, ordering, and suppression edges ------------
+
+    [Fact]
+    public void IndependentErrors_AreAllReported()
+    {
+        Compilation compilation = CompileMain("let x = y; let z = w;");
+
+        Assert.Equal(["ARITH3005", "ARITH3005"], Codes(compilation));
+    }
+
+    [Fact]
+    public void PrintArityError_StillBindsItsArgumentsFirst()
+    {
+        Compilation compilation = CompileMain("print(1, y);");
+
+        Assert.Equal(["ARITH3005", "ARITH3008"], Codes(compilation));
+    }
+
+    [Fact]
+    public void UndefinedFunctionCall_StillBindsItsArguments()
+    {
+        Compilation compilation = CompileMain("foo(bar);");
+
+        Assert.Equal(["ARITH3005", "ARITH3006"], Codes(compilation));
+    }
+
+    [Fact]
+    public void DuplicateFunctionBody_IsStillBoundForItsOwnDiagnostics()
+    {
+        Compilation compilation = Compile("fn f() { } fn f() { let x = y; } fn main() { }");
+
+        Assert.Equal(["ARITH3001", "ARITH3005"], Codes(compilation));
+        // Only the first declaration is part of the program.
+        Assert.Equal(2, compilation.Program.Functions.Length);
+    }
+
+    [Fact]
+    public void UseBeforeDeclaration_IsUndefined()
+    {
+        // Spec §1: a local may be referenced only after it has been
+        // declared — the initializer binds before the name exists.
+        Compilation compilation = CompileMain("let x = x;");
+
+        Assert.Equal(["ARITH3005"], Codes(compilation));
+    }
+
+    [Fact]
+    public void ParseError_DoesNotCascadeIntoBindingDiagnostics()
+    {
+        // The multi-diagnostic policy end to end: the missing initializer is
+        // a syntax error, `x` binds with the Error type, and using it in
+        // print adds nothing.
+        Compilation compilation = CompileMain("let x = ; print(x);");
+
+        Assert.Equal(["ARITH2001"], Codes(compilation));
+    }
+
+    [Fact]
+    public void MissingLetIdentifier_DeclaresNothingSilently()
+    {
+        Compilation compilation = CompileMain("let = 1;");
+
+        Assert.Equal(["ARITH2001"], Codes(compilation));
+    }
+
+    [Fact]
+    public void MainWithUnparsableReturnType_DoesNotAlsoReportSignatureError()
+    {
+        // The missing type is a syntax error; the Error return type must not
+        // trigger ARITH3004 on top.
+        Compilation compilation = Compile("fn main() -> { }");
+
+        Assert.Equal(["ARITH2001"], Codes(compilation));
+    }
+
+    [Fact]
+    public void EmptySource_ReportsOnlyTheMissingEntryPoint()
+    {
+        Compilation compilation = Compile("");
+
+        Assert.Equal(["ARITH3003"], Codes(compilation));
+    }
+
+    [Fact]
+    public void RedeclaredPrint_DoesNotBreakTheBuiltin()
+    {
+        // The declaration is rejected, but print statements keep binding to
+        // the builtin.
+        Compilation compilation = Compile("fn print() { } fn main() { print(42); }");
+
+        Assert.Equal(["ARITH3002"], Codes(compilation));
+    }
+
+    [Fact]
+    public void ErrorTypedVariable_IsUsableWithoutFurtherDiagnostics()
+    {
+        Compilation compilation = CompileMain("let x = y; print(x);");
+
+        Assert.Equal(["ARITH3005"], Codes(compilation));
+    }
+
+    // ---- More semantic corners ------------------------------------------
+
+    [Theory]
+    [InlineData("let x = -9223372036854775809;", "ARITH3012")] // One below i64 min.
+    [InlineData("let x: i32 = -(2147483648);", "ARITH3012")]   // Parens break directness: the magnitude rule is only for the literal directly beneath '-'.
+    [InlineData("let x = -\"a\";", "ARITH3011")]
+    [InlineData("let x = \"a\" + \"b\";", "ARITH3010")]        // String concat arrives in step 7.
+    public void SemanticCorner_ReportsExactlyOneDiagnostic(string body, string expectedCode)
+    {
+        Compilation compilation = CompileMain(body);
+
+        Assert.Equal([expectedCode], Codes(compilation));
+    }
+
+    [Fact]
+    public void VoidCallAsOperand_ReportsTheOperator()
+    {
+        Compilation compilation = Compile("fn g() { } fn main() { let x = g() + 1; }");
+
+        Assert.Equal(["ARITH3010"], Codes(compilation));
+    }
+
+    [Fact]
+    public void VoidCallAsPrintArgument_HasNoValue()
+    {
+        Compilation compilation = Compile("fn g() { } fn main() { print(g()); }");
+
+        Assert.Equal(["ARITH3017"], Codes(compilation));
+    }
+
+    [Fact]
+    public void ReturnValueTypeMismatch_ReportsArith3009()
+    {
+        Compilation compilation = Compile("fn f() -> i64 { return 1.5; } fn main() { }");
+
+        Assert.Equal(["ARITH3009"], Codes(compilation));
+    }
+
+    [Fact]
+    public void NotYetImplementedStatement_DoesNotBindItsChildren()
+    {
+        // Pins current staging behavior: an unimplemented statement reports
+        // only ARITH3901 — its condition and body wait for step 6, so the
+        // undefined names inside stay undiagnosed until then.
+        Compilation compilation = CompileMain("if y { let x = z; }");
+
+        Assert.Equal(["ARITH3901"], Codes(compilation));
+    }
+
     [Fact]
     public void MutuallyRecursiveFunctions_BindWithoutForwardDeclarations()
     {
