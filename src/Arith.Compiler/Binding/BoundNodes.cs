@@ -106,6 +106,16 @@ public sealed record BoundCallExpression(
     FunctionSymbol Function,
     ImmutableArray<BoundExpression> Arguments) : BoundExpression(Function.ReturnType);
 
+/// <summary>
+/// An explicit conversion `type(operand)` (spec §7). The operand was typed
+/// independently — the target provides no expected type — and the pair was
+/// validated; narrowing integer and float-to-integer conversions fault at
+/// runtime when out of range.
+/// </summary>
+public sealed record BoundConversionExpression(
+    ArithType Type,
+    BoundExpression Operand) : BoundExpression(Type);
+
 /// <summary>Placeholder for an expression that could not be bound; its Error type suppresses cascades.</summary>
 public sealed record BoundErrorExpression() : BoundExpression(ArithType.Error);
 

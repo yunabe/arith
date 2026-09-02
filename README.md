@@ -9,12 +9,10 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The language specification is in place and the compiler is being built stage
-> by stage (see [docs/compiler-design.md](docs/compiler-design.md)). `arith
-> build` and `arith run` work end to end for nearly all of v0.1 — functions,
-> locals, arithmetic, control flow, comparisons, logical operators, string
-> equality, and `print`; only explicit conversions (`i64(x)`) and string
-> concatenation are not compiled yet and report a temporary ARITH3901 error.
+> The compiler implements all of language v0.1 (architecture in
+> [docs/compiler-design.md](docs/compiler-design.md)): `arith build` and
+> `arith run` compile and execute every feature in
+> [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md).
 
 ## Example
 

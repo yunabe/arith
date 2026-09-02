@@ -372,6 +372,83 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_Conversions_MatchTheSpecExamples()
+    {
+        string source = WriteSource("convert.arith", """
+            fn main() {
+                let small: i32 = 10;
+                let large = i64(small);
+                let value = f64(large) / 4.0;
+                print(value);
+                print(i64(1.9));
+                print(i32(-7));
+                let a = 5 / 2;
+                let message = "answer=" + string(a);
+                print(message);
+                print(string(true) + "/" + string(1.5f32));
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["2.5", "1", "-7", "answer=2", "True/1.5"], Lines(result.Output));
+    }
+
+    [Theory]
+    [InlineData("print(i32(3000000000));")]  // Narrowing out of range (spec §7).
+    [InlineData("print(i64(0.0 / 0.0));")]   // NaN to integer.
+    [InlineData("print(i64(1.0 / 0.0));")]   // Infinity to integer.
+    public void Run_InvalidRuntimeConversion_FailsWithOverflow(string statement)
+    {
+        string source = WriteSource("badconv.arith", $"fn main() {{ {statement} }}");
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("System.OverflowException", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_StringEquality_OnRuntimeBuiltStrings()
+    {
+        // string(1) + "x" is built at runtime by String.Concat, so it cannot
+        // be reference-equal to the interned literal — this run genuinely
+        // distinguishes content equality from ceq.
+        string source = WriteSource("runtimestreq.arith", """
+            fn main() {
+                print(string(1) + "x" == "1x");
+                print(string(1) + "x" != "1x");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["True", "False"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_CompoundConcatenation_BuildsAString()
+    {
+        string source = WriteSource("concat.arith", """
+            fn main() {
+                let s = "";
+                for i in 1..=3 {
+                    s += string(i);
+                }
+                print(s);
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["123"], Lines(result.Output));
+    }
+
+    [Fact]
     public void Build_WritesRunnableArtifacts()
     {
         string source = WriteSource("hello.arith", "fn main() { print(\"hello from arith\"); }");

@@ -36,9 +36,10 @@ public sealed class Emitter
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantToString = [];
     private MemberReferenceHandle _consoleWriteLineString;
-    private MemberReferenceHandle _consoleWriteLineBool;
     private MemberReferenceHandle _cultureGetInvariant;
     private MemberReferenceHandle _stringEquals;
+    private MemberReferenceHandle _stringConcat;
+    private MemberReferenceHandle _booleanToString;
     private TypeReferenceHandle _objectType;
 
     private Emitter() => _bodyStream = new MethodBodyStreamEncoder(_ilStream);
@@ -179,14 +180,31 @@ public sealed class Emitter
                 returnType: r => r.Void(),
                 parameterCount: 1,
                 parameters: p => p.AddParameter().Type().String()));
-        _consoleWriteLineBool = _metadata.AddMemberReference(
-            console,
-            _metadata.GetOrAddString("WriteLine"),
+
+        // String `+` is concatenation (spec §8.1).
+        _stringConcat = _metadata.AddMemberReference(
+            stringType,
+            _metadata.GetOrAddString("Concat"),
             MethodSignature(
                 isInstanceMethod: false,
-                returnType: r => r.Void(),
-                parameterCount: 1,
-                parameters: p => p.AddParameter().Type().Boolean()));
+                returnType: r => r.Type().String(),
+                parameterCount: 2,
+                parameters: p =>
+                {
+                    p.AddParameter().Type().String();
+                    p.AddParameter().Type().String();
+                }));
+
+        // bool-to-string ("True"/"False") is culture-independent already.
+        TypeReferenceHandle booleanType = AddTypeReference(systemRuntime, "System", "Boolean");
+        _booleanToString = _metadata.AddMemberReference(
+            booleanType,
+            _metadata.GetOrAddString("ToString"),
+            MethodSignature(
+                isInstanceMethod: true,
+                returnType: r => r.Type().String(),
+                parameterCount: 0,
+                parameters: _ => { }));
 
         // Numeric print must be culture-invariant (spec §10.1, design §4.5):
         // the typed Console.WriteLine overloads format through the current
@@ -594,39 +612,47 @@ public sealed class Emitter
             Pop();
         }
 
+        /// <summary>`print(x)` is "convert to string, WriteLine" for every type (spec §10.1).</summary>
         private void EmitPrint(BoundPrintStatement print)
         {
-            ArithType type = print.Argument.Type;
             EmitExpression(print.Argument);
+            EmitConvertToString(print.Argument.Type);
+            _il.Call(_emitter._consoleWriteLineString);
+            Pop();
+        }
+
+        /// <summary>
+        /// Replaces the value on the stack with its culture-invariant string
+        /// form — the shared lowering behind `print` and `string(value)`.
+        /// Numerics call ToString(CultureInfo.InvariantCulture), bool calls
+        /// its (already culture-independent) ToString; both are instance
+        /// calls on a value type, hence the temp local for the address.
+        /// </summary>
+        private void EmitConvertToString(ArithType type)
+        {
             if (type == ArithType.String)
             {
-                _il.Call(_emitter._consoleWriteLineString);
-                Pop();
                 return;
             }
 
-            if (type == ArithType.Bool)
-            {
-                _il.Call(_emitter._consoleWriteLineBool);
-                Pop();
-                return;
-            }
-
-            // Numeric: value.ToString(CultureInfo.InvariantCulture) then
-            // WriteLine(string) — see AddRuntimeReferences for why. The
-            // instance call needs the value's address, hence the temp local.
             int temp = GetPrintTemp(type);
             _il.StoreLocal(temp);
             Pop();
             _il.LoadLocalAddress(temp);
             Push();
+            if (type == ArithType.Bool)
+            {
+                _il.Call(_emitter._booleanToString);
+                Pop();
+                Push();
+                return;
+            }
+
             _il.Call(_emitter._cultureGetInvariant);
             Push();
             _il.Call(_emitter._invariantToString[type]);
             Pop(2);
             Push();
-            _il.Call(_emitter._consoleWriteLineString);
-            Pop();
         }
 
         private void EmitExpression(BoundExpression expression)
@@ -689,6 +715,10 @@ public sealed class Emitter
                     EmitExpression(binary.Right);
                     EmitBinaryOperator(binary.OperatorKind, binary.Type);
                     break;
+                case BoundConversionExpression conversion:
+                    EmitExpression(conversion.Operand);
+                    EmitConversion(conversion.Operand.Type, conversion.Type);
+                    break;
                 case BoundCallExpression call:
                 {
                     foreach (BoundExpression argument in call.Arguments)
@@ -746,9 +776,62 @@ public sealed class Emitter
             Push();
         }
 
+        /// <summary>
+        /// Converts the stack top from one Arith type to another (spec §7).
+        /// Widening and float conversions are plain; narrowing integer and
+        /// float-to-integer conversions use conv.ovf, which faults at
+        /// runtime on out-of-range values, NaN, and infinity.
+        /// </summary>
+        private void EmitConversion(ArithType from, ArithType to)
+        {
+            if (from == to)
+            {
+                return; // Identity, including string(string).
+            }
+
+            if (to == ArithType.String)
+            {
+                EmitConvertToString(from);
+                return;
+            }
+
+            ILOpCode opCode;
+            if (to == ArithType.I32)
+            {
+                opCode = ILOpCode.Conv_ovf_i4; // From i64 or a float: checked.
+            }
+            else if (to == ArithType.I64)
+            {
+                opCode = from.IsFloat ? ILOpCode.Conv_ovf_i8 : ILOpCode.Conv_i8; // i32 → i64 always fits.
+            }
+            else if (to == ArithType.F32)
+            {
+                opCode = ILOpCode.Conv_r4; // Precision loss is allowed (spec §7).
+            }
+            else if (to == ArithType.F64)
+            {
+                opCode = ILOpCode.Conv_r8;
+            }
+            else
+            {
+                throw new UnreachableException($"no conversion from '{from}' to '{to}' should have bound");
+            }
+
+            _il.OpCode(opCode);
+        }
+
         /// <summary>Spec §11: integer add/sub/mul are checked; div/rem fault at runtime on their own.</summary>
         private void EmitBinaryOperator(BoundBinaryOperatorKind kind, ArithType type)
         {
+            if (type == ArithType.String)
+            {
+                Debug.Assert(kind == BoundBinaryOperatorKind.Addition, "only + binds on strings");
+                _il.Call(_emitter._stringConcat);
+                Pop(2);
+                Push();
+                return;
+            }
+
             ILOpCode opCode = kind switch
             {
                 BoundBinaryOperatorKind.Addition => type.IsInteger ? ILOpCode.Add_ovf : ILOpCode.Add,

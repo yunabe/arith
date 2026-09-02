@@ -165,15 +165,62 @@ public sealed class BinderTests
         Assert.Equal([expectedCode], Codes(compilation));
     }
 
+    // ---- Explicit conversions and string concatenation (step 7) ---------
+
     [Theory]
-    [InlineData("let x = i64(1);", "explicit conversions")]
-    public void NotYetImplementedConstruct_ReportsArith3901(string body, string subject)
+    [InlineData("let x = i64(1i32);", "i64")]
+    [InlineData("let x = i32(1);", "i32")]
+    [InlineData("let x = f64(1);", "f64")]
+    [InlineData("let x = f32(1.5);", "f32")]
+    [InlineData("let x = i64(1.9);", "i64")]
+    [InlineData("let x = i64(1);", "i64")]              // Identity conversion is allowed.
+    [InlineData("let x = string(1);", "string")]
+    [InlineData("let x = string(true);", "string")]
+    [InlineData("let x = string(\"s\");", "string")]
+    [InlineData("let x = \"a\" + \"b\";", "string")]    // `+` concatenates strings (spec §8.1).
+    public void ConversionAndConcatenation_ProduceTheTargetType(string letStatement, string expectedType)
+    {
+        Assert.Equal(expectedType, LetType(letStatement));
+    }
+
+    [Fact]
+    public void ConversionOperand_IsTypedIndependentlyOfTheTarget()
+    {
+        // Spec §7 (decided in the design review): i32(3000000000) is an
+        // in-range i64 literal followed by a runtime-checked conversion —
+        // NOT a compile-time literal-range error.
+        Compilation compilation = CompileMain("let x = i32(3000000000);");
+
+        Assert.Empty(compilation.Diagnostics);
+        BoundLetStatement let =
+            Assert.IsType<BoundLetStatement>(FunctionBody(compilation, "main").Statements[0]);
+        BoundConversionExpression conversion = Assert.IsType<BoundConversionExpression>(let.Initializer);
+        Assert.Same(ArithType.I32, conversion.Type);
+        Assert.Same(ArithType.I64, conversion.Operand.Type);
+    }
+
+    [Theory]
+    [InlineData("let x = bool(1);", "ARITH3020")]        // bool is not convertible (spec §7).
+    [InlineData("let x = bool(true);", "ARITH3020")]
+    [InlineData("let x = i32(true);", "ARITH3020")]
+    [InlineData("let x = f64(\"1.5\");", "ARITH3020")]   // string-to-anything is unsupported.
+    [InlineData("let x = i64();", "ARITH3008")]
+    [InlineData("let x = i64(1, 2);", "ARITH3008")]
+    [InlineData("let s = \"a\" + 1;", "ARITH3010")]      // Concatenation needs two strings.
+    [InlineData("let s = \"a\" - \"b\";", "ARITH3010")]  // Only + works on strings.
+    public void InvalidConversionOrConcatenation_ReportsExactlyOneDiagnostic(string body, string expectedCode)
     {
         Compilation compilation = CompileMain(body);
 
-        Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
-        Assert.Equal("ARITH3901", diagnostic.Code);
-        Assert.Contains(subject, diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal([expectedCode], Codes(compilation));
+    }
+
+    [Fact]
+    public void CompoundConcatenation_BindsOnStrings()
+    {
+        Compilation compilation = CompileMain("let s = \"a\"; s += \"b\";");
+
+        Assert.Empty(compilation.Diagnostics);
     }
 
     // ---- Control flow and boolean operators (design §6 step 6) ----------
@@ -422,7 +469,6 @@ public sealed class BinderTests
     [InlineData("let x = -9223372036854775809;", "ARITH3012")] // One below i64 min.
     [InlineData("let x: i32 = -(2147483648);", "ARITH3012")]   // Parens break directness: the magnitude rule is only for the literal directly beneath '-'.
     [InlineData("let x = -\"a\";", "ARITH3011")]
-    [InlineData("let x = \"a\" + \"b\";", "ARITH3010")]        // String concat arrives in step 7.
     public void SemanticCorner_ReportsExactlyOneDiagnostic(string body, string expectedCode)
     {
         Compilation compilation = CompileMain(body);
