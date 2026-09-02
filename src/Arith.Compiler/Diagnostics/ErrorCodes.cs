@@ -22,4 +22,11 @@ public static class ErrorCodes
 
     public static readonly DiagnosticDescriptor InvalidNumericSuffix =
         new("ARITH1005", "invalid suffix '{0}' on numeric literal");
+
+    // Syntax errors (ARITH2xxx).
+    public static readonly DiagnosticDescriptor UnexpectedToken =
+        new("ARITH2001", "unexpected {0}, expected {1}");
+
+    public static readonly DiagnosticDescriptor NonCallExpressionStatement =
+        new("ARITH2002", "only a call expression can be used as a statement");
 }
