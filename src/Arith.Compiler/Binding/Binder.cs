@@ -9,17 +9,13 @@ using Arith.Compiler.Text;
 namespace Arith.Compiler.Binding;
 
 /// <summary>
-/// Name resolution and type checking (design §4.4). Binding runs in two
-/// passes — a declaration pass building the global function table, then a
-/// body pass — because declaration order is insignificant and functions may
-/// be mutually recursive (spec §1). Binding always runs to completion:
-/// unresolvable syntax binds to Error-typed nodes that suppress cascading
-/// diagnostics, and error placeholder syntax binds silently.
-///
-/// Staging (design §6, step 4): this binder covers functions, locals,
-/// numeric arithmetic, let/assignment/return/call/print, and the full
-/// pending-literal machinery. Control flow, comparison/logical operators,
-/// and explicit conversions report the temporary ARITH3901 until steps 6–7.
+/// Name resolution and type checking (design §4.4) for the full v0.1
+/// language. Binding runs in two passes — a declaration pass building the
+/// global function table, then a body pass — because declaration order is
+/// insignificant and functions may be mutually recursive (spec §1). Binding
+/// always runs to completion: unresolvable syntax binds to Error-typed nodes
+/// that suppress cascading diagnostics, and error placeholder syntax binds
+/// silently.
 /// </summary>
 public sealed class Binder
 {

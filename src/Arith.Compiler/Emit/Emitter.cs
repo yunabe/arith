@@ -354,9 +354,9 @@ public sealed class Emitter
 
     /// <summary>
     /// Emits one function body, tracking local slots and the true evaluation
-    /// stack depth. In the linear step-5 subset, statements after a return
-    /// are unreachable and are skipped rather than emitted, so a body never
-    /// falls off its end.
+    /// stack depth. Statements after a return in the same block are
+    /// unreachable and are skipped rather than emitted, so together with the
+    /// binder's definite-return analysis a body never falls off its end.
     /// </summary>
     private sealed class FunctionBodyEmitter(Emitter emitter, InstructionEncoder il)
     {

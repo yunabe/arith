@@ -316,10 +316,10 @@ keeping its SRM approach. Structure:
      `TextWriter.WriteLine` overloads do not qualify: they format through the
      writer's format provider — normally the current culture — so `3.5` could
      print as `3,5`. Numeric values therefore lower to the appropriate
-     `ToString(IFormatProvider)` call with `CultureInfo.InvariantCulture`
-     (the same lowering `string(value)` uses), and `print` then calls
-     `Console.WriteLine(string)`. The direct `Console.WriteLine` overloads
-     are used only for `bool` and `string` arguments.
+     `ToString(IFormatProvider)` call with `CultureInfo.InvariantCulture`,
+     and bool to its (already culture-independent) `Boolean.ToString`;
+     `print` shares this convert-to-string lowering with `string(value)` and
+     always calls `Console.WriteLine(string)`.
    - **`maxStack` is computed, not guessed**: the walk tracks the simulated
      stack depth and records the true maximum (il-emission-notes §4 explains
      why relying on the tiny-header default is a trap).
