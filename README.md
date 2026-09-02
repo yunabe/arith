@@ -8,8 +8,8 @@ The goal of this project is to explore the fundamental stages of a compiler—le
 
 > [!NOTE]
 > The language specification is in place and the compiler is being built stage
-> by stage (see [docs/compiler-design.md](docs/compiler-design.md)); lexing is
-> implemented, and parsing onward is not yet.
+> by stage (see [docs/compiler-design.md](docs/compiler-design.md)); lexing and
+> parsing are implemented, and name resolution onward is not yet.
 
 ## Example
 
@@ -117,7 +117,7 @@ The `version` command prints the CLI version:
 
 The repository is laid out as follows:
 
-- `src/Arith.Compiler` — the compiler as a library (currently source text, diagnostics, and the lexer; architecture in [docs/compiler-design.md](docs/compiler-design.md))
+- `src/Arith.Compiler` — the compiler as a library (currently source text, diagnostics, lexer, and parser; architecture in [docs/compiler-design.md](docs/compiler-design.md))
 - `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
 - `src/Arith.Cli` — the `arith` command-line tool (currently `arith version` and `arith experiment build-fib-command`, a code-generation dry run that emits a demo `fib` program as raw IL and metadata, optionally NativeAOT-compiled with `--aot`; see [docs/il-emission-notes.md](docs/il-emission-notes.md))
 - `tests/Arith.Cli.Tests` — xUnit v3 tests
