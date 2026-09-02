@@ -130,7 +130,7 @@ production (`FunctionDeclarationSyntax`, `LetStatementSyntax`,
 the node type) rather than a visitor hierarchy. Note that C# does **not**
 check exhaustiveness over such a hierarchy: a switch over the abstract base
 warns (CS8509) even when every current subclass is handled, because the
-language has no closed hierarchies yet (see the `closed` hierarchy proposal),
+language has [no closed hierarchies yet](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-15.0/closed-hierarchies.md),
 and adding a fallback arm silences new-node omissions instead of reporting
 them. So every such switch carries an explicit fallback that throws an
 internal-compiler-error exception (e.g. `UnreachableException`), and coverage
@@ -237,7 +237,7 @@ Other checks owned by this stage:
   is a type name; the binder turns them into `BoundConversionExpression` and
   validates the source/target type pair (spec §7).
 - `print(x)` binds to a `BoundPrintStatement`-style node with the argument's
-  type recorded — the emitter picks the `Console.WriteLine` overload from it.
+  type recorded — the emitter picks the lowering from it (section 4.5).
 - `break`/`continue` outside a loop; the loop variable of `for` being
   read-only.
 - **Definite return analysis** (spec §5: every reachable path through a
@@ -310,9 +310,16 @@ keeping its SRM approach. Structure:
    - String `==` lowers to a call to the static
      `string.Equals(string, string)` — **ordinal content equality** per spec
      §8.2 — and `!=` to its negation; never to reference equality via `ceq`.
-     String concatenation calls `String.Concat`; `string(value)` and `print`
-     must be **culture-invariant** (spec §10.1), so numeric-to-string uses the
-     invariant-culture .NET APIs, not bare `ToString()`.
+     String concatenation calls `String.Concat`.
+   - `string(value)` and numeric `print` must be **culture-invariant**
+     (spec §10.1). The typed numeric `Console.WriteLine` /
+     `TextWriter.WriteLine` overloads do not qualify: they format through the
+     writer's format provider — normally the current culture — so `3.5` could
+     print as `3,5`. Numeric values therefore lower to the appropriate
+     `ToString(IFormatProvider)` call with `CultureInfo.InvariantCulture`
+     (the same lowering `string(value)` uses), and `print` then calls
+     `Console.WriteLine(string)`. The direct `Console.WriteLine` overloads
+     are used only for `bool` and `string` arguments.
    - **`maxStack` is computed, not guessed**: the walk tracks the simulated
      stack depth and records the true maximum (il-emission-notes §4 explains
      why relying on the tiny-header default is a trap).
@@ -369,8 +376,8 @@ on-disk artifacts, and every packaging mode consumes the same bytes:
 - Spec §11's evaluation-order guarantees get targeted end-to-end tests
   (side-effecting call order in arguments and operands), and so does the
   closed-range endpoint rule — e.g.
-  `for i in (i64.MaxValue - 2)..=i64.MaxValue` (spelled with literals) must
-  run exactly three iterations and terminate.
+  `for i in (9223372036854775807 - 2)..=9223372036854775807` must run
+  exactly three iterations and terminate.
 
 ## 6. Implementation order
 
