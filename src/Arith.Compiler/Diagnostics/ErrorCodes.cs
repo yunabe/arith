@@ -76,6 +76,9 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor MissingReturnValue =
         new("ARITH3015", "function must return a value of type '{0}'");
 
+    public static readonly DiagnosticDescriptor NotAllPathsReturn =
+        new("ARITH3016", "not every path through '{0}' returns a value");
+
     public static readonly DiagnosticDescriptor ExpressionHasNoValue =
         new("ARITH3017", "expression does not produce a value");
 

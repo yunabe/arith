@@ -20,9 +20,53 @@ internal static class Program
         versionCommand.SetAction(parseResult =>
             parseResult.InvocationConfiguration.Output.WriteLine(VersionInfo.DisplayVersion));
         rootCommand.Subcommands.Add(versionCommand);
+        rootCommand.Subcommands.Add(BuildBuildCommand());
+        rootCommand.Subcommands.Add(BuildRunCommand());
         rootCommand.Subcommands.Add(BuildExperimentCommand());
 
         return rootCommand;
+    }
+
+    private static Command BuildBuildCommand()
+    {
+        Argument<string> sourceArgument = new("source")
+        {
+            Description = "The .arith source file to compile.",
+        };
+        Option<string?> outputOption = new("--output", "-o")
+        {
+            Description = "Directory the program is written into (default: the current directory).",
+        };
+        Command buildCommand = new("build")
+        {
+            Description = "Compile an Arith source file into a .NET assembly.",
+        };
+        buildCommand.Arguments.Add(sourceArgument);
+        buildCommand.Options.Add(outputOption);
+        buildCommand.SetAction(parseResult => CompilerCommands.Build(
+            parseResult.GetRequiredValue(sourceArgument),
+            parseResult.GetValue(outputOption),
+            parseResult.InvocationConfiguration.Output,
+            parseResult.InvocationConfiguration.Error));
+        return buildCommand;
+    }
+
+    private static Command BuildRunCommand()
+    {
+        Argument<string> sourceArgument = new("source")
+        {
+            Description = "The .arith source file to compile and run.",
+        };
+        Command runCommand = new("run")
+        {
+            Description = "Compile and run an Arith source file, forwarding its exit code.",
+        };
+        runCommand.Arguments.Add(sourceArgument);
+        runCommand.SetAction(parseResult => CompilerCommands.Run(
+            parseResult.GetRequiredValue(sourceArgument),
+            parseResult.InvocationConfiguration.Output,
+            parseResult.InvocationConfiguration.Error));
+        return runCommand;
     }
 
     private static Command BuildExperimentCommand()
