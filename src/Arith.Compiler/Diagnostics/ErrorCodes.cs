@@ -88,8 +88,6 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor BreakOrContinueOutsideLoop =
         new("ARITH3019", "'{0}' can only be used inside a loop");
 
-    // Temporary code for constructs the staged implementation has not
-    // reached yet (design §6); every use disappears by the end of step 7.
-    public static readonly DiagnosticDescriptor NotYetImplemented =
-        new("ARITH3901", "{0} is not implemented yet");
+    public static readonly DiagnosticDescriptor InvalidConversion =
+        new("ARITH3020", "cannot convert from '{0}' to '{1}'");
 }

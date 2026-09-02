@@ -9,17 +9,13 @@ using Arith.Compiler.Text;
 namespace Arith.Compiler.Binding;
 
 /// <summary>
-/// Name resolution and type checking (design §4.4). Binding runs in two
-/// passes — a declaration pass building the global function table, then a
-/// body pass — because declaration order is insignificant and functions may
-/// be mutually recursive (spec §1). Binding always runs to completion:
-/// unresolvable syntax binds to Error-typed nodes that suppress cascading
-/// diagnostics, and error placeholder syntax binds silently.
-///
-/// Staging (design §6, step 4): this binder covers functions, locals,
-/// numeric arithmetic, let/assignment/return/call/print, and the full
-/// pending-literal machinery. Control flow, comparison/logical operators,
-/// and explicit conversions report the temporary ARITH3901 until steps 6–7.
+/// Name resolution and type checking (design §4.4) for the full v0.1
+/// language. Binding runs in two passes — a declaration pass building the
+/// global function table, then a body pass — because declaration order is
+/// insignificant and functions may be mutually recursive (spec §1). Binding
+/// always runs to completion: unresolvable syntax binds to Error-typed nodes
+/// that suppress cascading diagnostics, and error placeholder syntax binds
+/// silently.
 /// </summary>
 public sealed class Binder
 {
@@ -643,18 +639,19 @@ public sealed class Binder
     private static bool IsLogical(BoundBinaryOperatorKind kind) =>
         kind is BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr;
 
-    /// <summary>Spec §8.1: arithmetic needs numeric operands; `%` needs integers. (String `+` arrives in step 7.)</summary>
-    private static bool IsArithmeticOperandType(BoundBinaryOperatorKind kind, ArithType type) =>
-        kind == BoundBinaryOperatorKind.Remainder ? type.IsInteger : type.IsNumeric;
+    /// <summary>Spec §8.1: arithmetic needs numeric operands, except `%` needs integers and `+` also concatenates strings.</summary>
+    private static bool IsArithmeticOperandType(BoundBinaryOperatorKind kind, ArithType type) => kind switch
+    {
+        BoundBinaryOperatorKind.Remainder => type.IsInteger,
+        BoundBinaryOperatorKind.Addition => type.IsNumeric || type == ArithType.String,
+        _ => type.IsNumeric,
+    };
 
     private BoundExpression BindCallExpression(CallExpressionSyntax syntax)
     {
         if (SyntaxFacts.IsTypeKeyword(syntax.Callee.Kind))
         {
-            // Explicit conversions arrive in step 7 (design §6).
-            BindArgumentsForDiagnostics(syntax);
-            _diagnostics.Report(ErrorCodes.NotYetImplemented, syntax.Callee.Span, "explicit conversions");
-            return new BoundErrorExpression();
+            return BindConversionExpression(syntax);
         }
 
         if (syntax.Callee.IsMissing)
@@ -697,6 +694,55 @@ public sealed class Binder
         }
 
         return new BoundCallExpression(function, arguments.MoveToImmutable());
+    }
+
+    /// <summary>
+    /// Binds `type(operand)` (spec §7). The target type provides no expected
+    /// type: the operand is typed on its own — literal defaults included, so
+    /// i32(3000000000) is an i64 value whose narrowing faults at runtime —
+    /// and then the conversion pair is validated: any numeric to any
+    /// numeric, and any primitive to string. bool is not convertible.
+    /// </summary>
+    private BoundExpression BindConversionExpression(CallExpressionSyntax syntax)
+    {
+        ArithType target = syntax.Callee.Kind switch
+        {
+            SyntaxKind.BoolKeyword => ArithType.Bool,
+            SyntaxKind.I32Keyword => ArithType.I32,
+            SyntaxKind.I64Keyword => ArithType.I64,
+            SyntaxKind.F32Keyword => ArithType.F32,
+            SyntaxKind.F64Keyword => ArithType.F64,
+            SyntaxKind.StringKeyword => ArithType.String,
+            _ => throw new UnreachableException($"unhandled type keyword {syntax.Callee.Kind}"),
+        };
+        if (syntax.Arguments.Length != 1)
+        {
+            BindArgumentsForDiagnostics(syntax);
+            _diagnostics.Report(
+                ErrorCodes.WrongArgumentCount, syntax.Span, syntax.Callee.Text, 1, syntax.Arguments.Length);
+            return new BoundErrorExpression();
+        }
+
+        BoundExpression operand = ResolveToDefault(BindExpression(syntax.Arguments[0], expected: null));
+        if (operand.Type.IsError)
+        {
+            return new BoundErrorExpression();
+        }
+
+        if (operand.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Arguments[0].Span);
+            return new BoundErrorExpression();
+        }
+
+        bool valid = (target.IsNumeric && operand.Type.IsNumeric) || target == ArithType.String;
+        if (!valid)
+        {
+            _diagnostics.Report(ErrorCodes.InvalidConversion, syntax.Span, operand.Type, target);
+            return new BoundErrorExpression();
+        }
+
+        return new BoundConversionExpression(target, operand);
     }
 
     /// <summary>Binds arguments of an unresolvable call purely for their own diagnostics.</summary>
