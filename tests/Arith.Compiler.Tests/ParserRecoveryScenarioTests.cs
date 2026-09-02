@@ -137,6 +137,19 @@ public sealed class ParserRecoveryScenarioTests
         Assert.Equal("(fn t (block (let x 1)))", dump);
     }
 
+    // And the run-of-Bad-tokens variant: each bad character was already
+    // diagnosed by the lexer, so MatchToken drops the whole run and still
+    // recovers the identifier behind it without parser diagnostics.
+    [Fact]
+    public void ConsecutiveBadTokens_AddNoParserDiagnostics()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let @@x = 1; }");
+
+        string[] expectedCodes = ["ARITH1001", "ARITH1001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let x 1)))", dump);
+    }
+
     // IDEAL: `main() {` at the top level is recognized as a function
     // declaration missing its `fn`; report that and parse the function.
     // TODAY: the diagnostic is reasonable, but the whole of `main` —
@@ -208,6 +221,30 @@ public sealed class ParserRecoveryScenarioTests
         (string[] codes, string dump) = ParseScenario("fn t() { return }");
 
         string[] expectedCodes = ["ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (return)))", dump);
+    }
+
+    // Companions: the valueless form is chosen from the expression FIRST
+    // set, so a following statement keyword or end of file also means "no
+    // value" — the next statement survives, and only the delimiters that
+    // are genuinely absent are reported.
+    [Fact]
+    public void MissingSemicolonBeforeNextStatement_KeepsTheReturnValueless()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { return let x = 1; }");
+
+        string[] expectedCodes = ["ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (return) (let x 1)))", dump);
+    }
+
+    [Fact]
+    public void ReturnAtEndOfFile_ReportsOnlyTheMissingDelimiters()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { return");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"]; // Missing ';' and '}'.
         Assert.Equal(expectedCodes, codes);
         Assert.Equal("(fn t (block (return)))", dump);
     }

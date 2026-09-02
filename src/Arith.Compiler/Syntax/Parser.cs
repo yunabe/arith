@@ -67,12 +67,16 @@ public sealed class Parser
             return Consume();
         }
 
-        // A Bad token was already reported by the lexer: drop it without a
-        // second diagnostic (cascade suppression) and let the expected token
-        // match if it sits right behind, as in `let @x = 1;`.
+        // Bad tokens were already reported by the lexer: drop the whole run
+        // without a second diagnostic (cascade suppression) and let the
+        // expected token match if it sits right behind, as in `let @x = 1;`.
         if (Current.Kind == SyntaxKind.BadToken)
         {
-            Consume();
+            while (Current.Kind == SyntaxKind.BadToken)
+            {
+                Consume();
+            }
+
             return Current.Kind == kind ? Consume() : MissingToken(kind);
         }
 
@@ -285,12 +289,11 @@ public sealed class Parser
     {
         int start = Consume().Span.Start;
 
-        // A '}' right after `return` means the valueless form with only its
-        // ';' missing — MatchToken reports that; don't force a value error.
-        ExpressionSyntax? value =
-            Current.Kind is SyntaxKind.SemicolonToken or SyntaxKind.CloseBraceToken
-                ? null
-                : ParseExpression();
+        // Anything that cannot start an expression — ';', '}', EOF, a
+        // statement keyword — selects the valueless form; the MatchToken
+        // below then reports the missing ';' as the only diagnostic instead
+        // of forcing a value error.
+        ExpressionSyntax? value = CanStartExpression(Current.Kind) ? ParseExpression() : null;
         MatchToken(SyntaxKind.SemicolonToken);
         return new ReturnStatementSyntax(value, SpanFrom(start));
     }
