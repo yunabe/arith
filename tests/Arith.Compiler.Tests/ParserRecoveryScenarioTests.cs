@@ -443,6 +443,145 @@ public sealed class ParserRecoveryScenarioTests
         Assert.Equal("(fn t (block (expr print) (expr x)))", dump);
     }
 
+    // IDEAL: one "expected ',' between parameters" diagnostic, treating the
+    // whitespace before `b` as the missing separator and preserving both
+    // parameters and the empty body.
+    // TODAY: the parser ends the parameter list after `a`, fabricates ')' and
+    // '{', then reinterprets `b: i64` as body debris: five diagnostics, the
+    // second parameter is lost, and the real body braces close the debris.
+    [Fact]
+    public void MissingCommaBetweenParameters_TurnsTheSecondParameterIntoBodyDebris()
+    {
+        (string[] codes, string dump) = ParseScenario("fn f(a: i64 b: i64) { }");
+
+        string[] expectedCodes =
+            ["ARITH2001", "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn f (param a i64) (block (expr b) (error-stmt)))", dump);
+    }
+
+    // IDEAL: the missing `()` on a no-parameter function costs one targeted
+    // diagnostic (or one for each parenthesis) and produces no parameters.
+    // TODAY: seeing '{' where '(' belongs enters parameter parsing anyway,
+    // fabricating an identifier, ':', type, and ')' around a ghost parameter:
+    // five diagnostics for the two omitted delimiters.
+    [Fact]
+    public void MissingEmptyParameterParentheses_FabricatesAGhostParameter()
+    {
+        (string[] codes, string dump) = ParseScenario("fn f { }");
+
+        string[] expectedCodes =
+            ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn f (param  ) (block))", dump);
+    }
+
+    // IDEAL: one "unknown type 'int'" diagnostic, ideally suggesting `i32`
+    // or `i64`, while keeping `1` as the initializer and the next statement.
+    // TODAY: ParseType leaves `int` unconsumed. It becomes the initializer,
+    // the real '= 1;' is skipped as another statement, and one familiar type
+    // name produces four diagnostics and a materially wrong let node.
+    [Fact]
+    public void UnknownLocalTypeName_BecomesTheInitializer()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { let x: int = 1; let y = 2; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let x :  int) (error-stmt) (let y 2)))", dump);
+    }
+
+    // IDEAL: one "expected ',' between arguments" diagnostic, inserting the
+    // separator so the call remains `f(1, 2)` and the following let survives.
+    // TODAY: the call closes after `1`; `2` is ejected into a non-call
+    // expression statement and ')' becomes debris, yielding five diagnostics
+    // and a call with the wrong arity.
+    [Fact]
+    public void MissingCommaBetweenArguments_EjectsTheSecondArgumentIntoAStatement()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { f(1 2); let x = 3; }");
+
+        string[] expectedCodes =
+            ["ARITH2001", "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (expr (call f 1)) (expr 2) (error-stmt) (let x 3)))", dump);
+    }
+
+    // IDEAL: one diagnostic at '*' saying an operand is missing after '+',
+    // then consume or reinterpret the extra operator without losing `2` from
+    // the initializer.
+    // TODAY: '*' becomes the error operand, `2` is re-parsed as a forbidden
+    // expression statement, and one doubled operator produces three
+    // diagnostics plus a truncated initializer.
+    [Fact]
+    public void DoubledBinaryOperator_EjectsTheRightOperandIntoAStatement()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { let x = 1 + * 2; let y = 3; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001", "ARITH2002"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let x (+ 1 (error))) (expr 2) (let y 3)))", dump);
+    }
+
+    // IDEAL: `for i = 0..10` is one token away from Arith's range syntax;
+    // report "expected 'in', found '='", treat it as `in`, and preserve the
+    // loop and the statement after it.
+    // TODAY: five diagnostics follow. The start and range operator are lost,
+    // the loop body is mostly debris, and only the later let fully recovers.
+    [Fact]
+    public void EqualsInsteadOfIn_DestroysTheRangeLoop()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { for i = 0..10 { print(i); } let y = 2; }");
+
+        string[] expectedCodes =
+            ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (for i  (error) 0 (block (error-stmt))) (let y 2)))",
+            dump);
+    }
+
+    // IDEAL: one diagnostic for the missing range start, leaving '..' in
+    // place as the range operator and parsing `10` as the end.
+    // TODAY: the error expression consumes '..' as the missing start. The
+    // parser then also reports `10` as the missing range operator and records
+    // a fabricated operator token, although the body and next statement live.
+    [Fact]
+    public void MissingRangeStart_ConsumesTheRealRangeOperator()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { for i in ..10 { print(i); } let y = 2; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (for i  (error) 10 (block (expr (call print i)))) (let y 2)))",
+            dump);
+    }
+
+    // IDEAL: one diagnostic for the missing range end, leaving '{' to open
+    // the loop body — the same delimiter-preservation principle as a missing
+    // if condition, but at the second expression in a for production.
+    // TODAY: the error expression consumes '{'; ParseBlock then fabricates a
+    // replacement before `print`, adding a second diagnostic and losing the
+    // body's opening brace from the recovered structure.
+    [Fact]
+    public void MissingRangeEnd_ConsumesTheLoopOpenBrace()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { for i in 0.. { print(i); } let y = 2; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (for i .. 0 (error) (block (expr (call print i)))) (let y 2)))",
+            dump);
+    }
+
     // A contrast case where the current minimal recovery already behaves
     // well: an extra top-level '}' costs exactly one diagnostic and both
     // functions survive. Kept here to define the bar the cases above miss.
