@@ -71,6 +71,10 @@ arith build hello.arith [-o <dir>]   # compile into a .NET assembly
 arith run hello.arith                # compile and run, forwarding the exit code
 ```
 
+The source file must be named `<program-name>.arith`, where `<program-name>`
+starts with a letter or `_` and contains only letters, digits, `_`, and `-`
+(a CLI rule, not part of the language); the outputs are named after it.
+
 `build` produces framework-dependent artifacts:
 
 ```text

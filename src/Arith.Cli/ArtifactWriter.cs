@@ -22,23 +22,30 @@ internal static class ArtifactWriter
         }
         """;
 
+    /// <summary>The paths <see cref="Write"/> will create, so callers can check for collisions before writing.</summary>
+    internal static IReadOnlyList<string> PlannedPaths(string outputDirectory, string name) =>
+    [
+        Path.Combine(outputDirectory, name + ".dll"),
+        Path.Combine(outputDirectory, name + ".runtimeconfig.json"),
+        Path.Combine(outputDirectory, name),
+        Path.Combine(outputDirectory, name + ".cmd"),
+    ];
+
     /// <summary>Writes the program's files into <paramref name="outputDirectory"/> and returns their paths.</summary>
     internal static IReadOnlyList<string> Write(
         string outputDirectory, string name, ImmutableArray<byte> peImage)
     {
         Directory.CreateDirectory(outputDirectory);
-        List<string> written = [];
-
-        string assemblyPath = Path.Combine(outputDirectory, name + ".dll");
+        IReadOnlyList<string> paths = PlannedPaths(outputDirectory, name);
+        string assemblyPath = paths[0];
         File.WriteAllBytes(assemblyPath, [.. peImage]);
-        written.Add(assemblyPath);
+        File.WriteAllText(paths[1], RuntimeConfigJsonTemplate + Environment.NewLine);
 
-        string runtimeConfigPath = Path.Combine(outputDirectory, name + ".runtimeconfig.json");
-        File.WriteAllText(runtimeConfigPath, RuntimeConfigJsonTemplate + Environment.NewLine);
-        written.Add(runtimeConfigPath);
-
-        string launcherPath = Path.Combine(outputDirectory, name);
-        File.WriteAllText(launcherPath, $"#!/bin/sh\nexec dotnet \"$(dirname \"$0\")/{name}.dll\" \"$@\"\n");
+        // The launchers derive the dll path from their own location instead
+        // of embedding the program name, so a renamed launcher fails loudly
+        // rather than running some other program's dll.
+        string launcherPath = paths[2];
+        File.WriteAllText(launcherPath, "#!/bin/sh\nexec dotnet \"$0.dll\" \"$@\"\n");
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(
@@ -48,12 +55,7 @@ internal static class ArtifactWriter
                 UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
 
-        written.Add(launcherPath);
-
-        string cmdLauncherPath = Path.Combine(outputDirectory, name + ".cmd");
-        File.WriteAllText(cmdLauncherPath, $"@echo off\r\ndotnet \"%~dp0{name}.dll\" %*\r\n");
-        written.Add(cmdLauncherPath);
-
-        return written;
+        File.WriteAllText(paths[3], "@echo off\r\ndotnet \"%~dpn0.dll\" %*\r\n");
+        return paths;
     }
 }

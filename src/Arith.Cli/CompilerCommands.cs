@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 using Arith.Compiler;
 using Arith.Compiler.Diagnostics;
@@ -8,12 +9,40 @@ using Arith.Compiler.Text;
 namespace Arith.Cli;
 
 /// <summary>The `arith build` and `arith run` implementations: thin drivers over Arith.Compiler.</summary>
-internal static class CompilerCommands
+internal static partial class CompilerCommands
 {
+    /// <summary>
+    /// The CLI's (not the language's) rule for source files: the input is
+    /// `&lt;program-name&gt;.arith` and the program name — which names every
+    /// output artifact — is restricted to a filesystem- and launcher-safe
+    /// shape. A future `--name` option can split output naming from the
+    /// source name if richer file names are ever needed.
+    /// </summary>
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_-]*$")]
+    private static partial Regex ProgramNameRegex();
+
     /// <summary>Compiles a source file and writes its artifacts. Returns the process exit code.</summary>
     internal static int Build(string sourcePath, string? outputDirectory, TextWriter output, TextWriter error)
     {
-        if (CompileFile(sourcePath, error) is not ({ } result, { } source))
+        if (ValidateProgramName(sourcePath, error) is not { } name)
+        {
+            return 1;
+        }
+
+        // Defense in depth beyond the name rule: refuse to overwrite the
+        // input with any planned output, whatever the paths involved.
+        string resolvedOutputDirectory = outputDirectory ?? Directory.GetCurrentDirectory();
+        string sourceFullPath = Path.GetFullPath(sourcePath);
+        foreach (string planned in ArtifactWriter.PlannedPaths(resolvedOutputDirectory, name))
+        {
+            if (string.Equals(Path.GetFullPath(planned), sourceFullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                error.WriteLine($"error: output file '{planned}' would overwrite the source file");
+                return 1;
+            }
+        }
+
+        if (CompileFile(sourcePath, name, error) is not ({ } result, { } source))
         {
             return 1;
         }
@@ -24,9 +53,7 @@ internal static class CompilerCommands
             return 1;
         }
 
-        string name = Path.GetFileNameWithoutExtension(sourcePath);
-        foreach (string path in ArtifactWriter.Write(
-            outputDirectory ?? Directory.GetCurrentDirectory(), name, result.PeImage))
+        foreach (string path in ArtifactWriter.Write(resolvedOutputDirectory, name, result.PeImage))
         {
             output.WriteLine($"wrote {path}");
         }
@@ -37,7 +64,12 @@ internal static class CompilerCommands
     /// <summary>Builds into a temporary directory, runs via the dotnet host, and forwards the exit code.</summary>
     internal static int Run(string sourcePath, TextWriter output, TextWriter error)
     {
-        if (CompileFile(sourcePath, error) is not ({ } result, { } source))
+        if (ValidateProgramName(sourcePath, error) is not { } name)
+        {
+            return 1;
+        }
+
+        if (CompileFile(sourcePath, name, error) is not ({ } result, { } source))
         {
             return 1;
         }
@@ -48,7 +80,6 @@ internal static class CompilerCommands
             return 1;
         }
 
-        string name = Path.GetFileNameWithoutExtension(sourcePath);
         string temporaryDirectory = Path.Combine(
             Path.GetTempPath(), "arith-run-" + Guid.NewGuid().ToString("N"));
         try
@@ -73,8 +104,25 @@ internal static class CompilerCommands
         }
     }
 
+    /// <summary>Checks the file-name rule and returns the program name, or null after printing an error.</summary>
+    private static string? ValidateProgramName(string sourcePath, TextWriter error)
+    {
+        string fileName = Path.GetFileName(sourcePath);
+        string name = Path.GetFileNameWithoutExtension(fileName);
+        if (fileName.EndsWith(".arith", StringComparison.Ordinal) && ProgramNameRegex().IsMatch(name))
+        {
+            return name;
+        }
+
+        error.WriteLine(
+            $"error: '{fileName}' is not a valid source file name: expected <program-name>.arith, "
+            + "where <program-name> starts with a letter or '_' and contains only letters, digits, '_', and '-'");
+        return null;
+    }
+
     /// <summary>Reads and compiles the file, or returns null (with a message) when it cannot be read.</summary>
-    private static (EmitResult Result, SourceText Source)? CompileFile(string sourcePath, TextWriter error)
+    private static (EmitResult Result, SourceText Source)? CompileFile(
+        string sourcePath, string assemblyName, TextWriter error)
     {
         string text;
         try
@@ -89,7 +137,7 @@ internal static class CompilerCommands
 
         SourceText source = SourceText.From(text, sourcePath);
         Compilation compilation = Compilation.Create(SyntaxTree.Parse(source));
-        return (compilation.Emit(Path.GetFileNameWithoutExtension(sourcePath)), source);
+        return (compilation.Emit(assemblyName), source);
     }
 
     /// <summary>Renders diagnostics as `path:line:col: severity CODE: message` (design §4.6).</summary>

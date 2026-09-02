@@ -199,6 +199,43 @@ public sealed class BuildRunCommandTests : IDisposable
         ProcessResult run = ProcessRunner.Run(new ProcessStartInfo("dotnet", [assemblyPath]));
         Assert.Equal(0, run.ExitCode);
         Assert.Equal(["hello from arith"], Lines(run.Output));
+
+        // The POSIX launcher derives the dll path from its own location, so
+        // it works from any working directory.
+        if (!OperatingSystem.IsWindows())
+        {
+            ProcessResult launched = ProcessRunner.Run(
+                new ProcessStartInfo(Path.Combine(outputDirectory, "hello")) { WorkingDirectory = _directory });
+            Assert.Equal(0, launched.ExitCode);
+            Assert.Equal(["hello from arith"], Lines(launched.Output));
+        }
+    }
+
+    [Theory]
+    [InlineData("bad name.arith")]     // Space.
+    [InlineData("1st.arith")]          // Leading digit.
+    [InlineData("hello.txt")]          // Wrong extension.
+    [InlineData("hello.arith.arith")]  // Dot in the program name.
+    public void Build_InvalidSourceFileName_FailsWithTheNamingRule(string fileName)
+    {
+        string source = WriteSource(fileName, "fn main() { }");
+
+        CliResult result = CliRunner.Run("build", source, "-o", Path.Combine(_directory, "out"));
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("is not a valid source file name", result.Error, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(_directory, "out")));
+    }
+
+    [Fact]
+    public void Run_HyphenatedProgramName_IsAccepted()
+    {
+        string source = WriteSource("my-app_2.arith", "fn main() { print(\"ok\"); }");
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["ok"], Lines(result.Output));
     }
 
     [Fact]
