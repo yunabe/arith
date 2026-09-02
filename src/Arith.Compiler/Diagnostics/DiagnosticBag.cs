@@ -15,9 +15,11 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public bool HasErrors { get; private set; }
 
-    public void Report(DiagnosticDescriptor descriptor, TextSpan span, params object[] args)
+    public void Report(DiagnosticDescriptor descriptor, TextSpan span, params object[] args) =>
+        Add(Diagnostic.Create(descriptor, span, args));
+
+    public void Add(Diagnostic diagnostic)
     {
-        Diagnostic diagnostic = Diagnostic.Create(descriptor, span, args);
         _diagnostics.Add(diagnostic);
         HasErrors |= diagnostic.Severity == DiagnosticSeverity.Error;
     }
