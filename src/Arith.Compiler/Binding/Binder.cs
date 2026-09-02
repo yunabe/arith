@@ -335,6 +335,15 @@ public sealed class Binder
                 bound, bound.Type.CanResolveTo(target) ? target : bound.Type.DefaultForPending);
         }
 
+        // Void is not a denotable value type: a void-producing call misused
+        // as a value is "no value here" (ARITH3017), not a type mismatch
+        // against whatever the context happened to expect.
+        if (bound.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Span);
+            return new BoundErrorExpression();
+        }
+
         if (!bound.Type.IsError && !target.IsError && bound.Type != target)
         {
             _diagnostics.Report(ErrorCodes.TypeMismatch, syntax.Span, target, bound.Type);
