@@ -35,11 +35,16 @@ public sealed class Emitter
     private readonly MethodBodyStreamEncoder _bodyStream;
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantToString = [];
+    private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantTryParse = [];
+    private readonly Dictionary<ArithType, MemberReferenceHandle> _isFinite = [];
     private MemberReferenceHandle _consoleWriteLineString;
     private MemberReferenceHandle _cultureGetInvariant;
     private MemberReferenceHandle _stringEquals;
     private MemberReferenceHandle _stringConcat;
     private MemberReferenceHandle _booleanToString;
+    private MemberReferenceHandle _booleanTryParse;
+    private MemberReferenceHandle _consoleGetError;
+    private MemberReferenceHandle _textWriterWriteLine;
     private TypeReferenceHandle _objectType;
 
     private Emitter() => _bodyStream = new MethodBodyStreamEncoder(_ilStream);
@@ -116,6 +121,25 @@ public sealed class Emitter
             }
         }
 
+        // Every main runs behind a synthesized bridge entry point that owns
+        // the string[] and enforces spec §5.1 — including a parameterless
+        // main, which must still reject any argument with the usage message.
+        int bridgeOffset = EmitEntryPointBridgeBody(program.EntryPoint!, assemblyName);
+        ParameterHandle bridgeParameter = MetadataTokens.ParameterHandle(parameterRow);
+        _metadata.AddParameter(
+            ParameterAttributes.None, _metadata.GetOrAddString("args"), sequenceNumber: 1);
+        MethodDefinitionHandle entryPoint = _metadata.AddMethodDefinition(
+            MethodAttributes.Private | MethodAttributes.Static | MethodAttributes.HideBySig,
+            MethodImplAttributes.IL,
+            _metadata.GetOrAddString("<Main>"),
+            MethodSignature(
+                isInstanceMethod: false,
+                returnType: r => r.Type().Int32(),
+                parameterCount: 1,
+                parameters: p => p.AddParameter().Type().SZArray().String()),
+            bridgeOffset,
+            bridgeParameter);
+
         // <Module> must be TypeDef row 1; "Program" (an `abstract sealed`,
         // i.e. static, class) owns every method from row 1 onward.
         _metadata.AddTypeDefinition(
@@ -138,7 +162,7 @@ public sealed class Emitter
             PEHeaderBuilder.CreateExecutableHeader(),
             new MetadataRootBuilder(_metadata),
             _ilStream,
-            entryPoint: _methodHandles[program.EntryPoint!],
+            entryPoint: entryPoint,
             flags: CorFlags.ILOnly);
         BlobBuilder peBlob = new();
         peBuilder.Serialize(peBlob);
@@ -218,6 +242,8 @@ public sealed class Emitter
                 parameterCount: 0,
                 parameters: _ => { }));
 
+        TypeReferenceHandle numberStyles =
+            AddTypeReference(systemRuntime, "System.Globalization", "NumberStyles");
         (ArithType Type, string Name)[] numericTypes =
         [
             (ArithType.I32, "Int32"),
@@ -236,7 +262,185 @@ public sealed class Emitter
                     returnType: r => r.Type().String(),
                     parameterCount: 1,
                     parameters: p => p.AddParameter().Type().Type(formatProvider, isValueType: false)));
+
+            // The entry-point bridge parses command-line arguments with the
+            // invariant culture (spec §5.1): TryParse avoids exception
+            // handling regions in the generated IL entirely.
+            _invariantTryParse[type] = _metadata.AddMemberReference(
+                typeReference,
+                _metadata.GetOrAddString("TryParse"),
+                MethodSignature(
+                    isInstanceMethod: false,
+                    returnType: r => r.Type().Boolean(),
+                    parameterCount: 4,
+                    parameters: p =>
+                    {
+                        p.AddParameter().Type().String();
+                        p.AddParameter().Type().Type(numberStyles, isValueType: true);
+                        p.AddParameter().Type().Type(formatProvider, isValueType: false);
+                        EncodeType(p.AddParameter().Type(isByRef: true), type);
+                    }));
+
+            // Float TryParse happily returns NaN or infinity (an overflowing
+            // exponent, or the literal spellings); spec §5.1 admits only
+            // finite decimal values, so the bridge re-checks with IsFinite.
+            if (type.IsFloat)
+            {
+                _isFinite[type] = _metadata.AddMemberReference(
+                    typeReference,
+                    _metadata.GetOrAddString("IsFinite"),
+                    MethodSignature(
+                        isInstanceMethod: false,
+                        returnType: r => r.Type().Boolean(),
+                        parameterCount: 1,
+                        parameters: p => EncodeType(p.AddParameter().Type(), type)));
+            }
         }
+
+        _booleanTryParse = _metadata.AddMemberReference(
+            booleanType,
+            _metadata.GetOrAddString("TryParse"),
+            MethodSignature(
+                isInstanceMethod: false,
+                returnType: r => r.Type().Boolean(),
+                parameterCount: 2,
+                parameters: p =>
+                {
+                    p.AddParameter().Type().String();
+                    p.AddParameter().Type(isByRef: true).Boolean();
+                }));
+
+        TypeReferenceHandle textWriter = AddTypeReference(systemRuntime, "System.IO", "TextWriter");
+        _consoleGetError = _metadata.AddMemberReference(
+            console,
+            _metadata.GetOrAddString("get_Error"),
+            MethodSignature(
+                isInstanceMethod: false,
+                returnType: r => r.Type().Type(textWriter, isValueType: false),
+                parameterCount: 0,
+                parameters: _ => { }));
+        _textWriterWriteLine = _metadata.AddMemberReference(
+            textWriter,
+            _metadata.GetOrAddString("WriteLine"),
+            MethodSignature(
+                isInstanceMethod: true,
+                returnType: r => r.Void(),
+                parameterCount: 1,
+                parameters: p => p.AddParameter().Type().String()));
+    }
+
+    // NumberStyles values used by the bridge (System.Globalization).
+    private const int NumberStylesInteger = 7;  // AllowLeading/TrailingWhite | AllowLeadingSign.
+    private const int NumberStylesFloat = 167;  // Integer | AllowDecimalPoint | AllowExponent.
+
+    /// <summary>
+    /// The synthesized entry point for a `main` with parameters (spec §5.1):
+    /// `static int32 &lt;Main&gt;(string[] args)` checks the argument count,
+    /// parses each argument invariantly (TryParse, so no exception-handling
+    /// regions), and calls the user's main — or prints a usage line to
+    /// stderr and returns 2. This is hand-shaped IL rather than a bound
+    /// tree because it needs string[], byref locals, and BCL calls that
+    /// Arith's own type system cannot express; if runtime support like this
+    /// ever grows loops or shared helpers, the design's answer is a real
+    /// C# runtime library, not more hand-emitted IL.
+    /// </summary>
+    private int EmitEntryPointBridgeBody(FunctionSymbol main, string assemblyName)
+    {
+        BlobBuilder code = new();
+        ControlFlowBuilder controlFlow = new();
+        InstructionEncoder il = new(code, controlFlow);
+        LabelHandle usage = il.DefineLabel();
+        ImmutableArray<ParameterSymbol> parameters = main.Parameters;
+
+        // if (args.Length != parameters.Length) goto usage;
+        il.LoadArgument(0);
+        il.OpCode(ILOpCode.Ldlen);
+        il.OpCode(ILOpCode.Conv_i4);
+        il.LoadConstantI4(parameters.Length);
+        il.Branch(ILOpCode.Bne_un, usage);
+
+        // Parse args[i] into local i, bailing to usage on the first failure.
+        foreach (ParameterSymbol parameter in parameters)
+        {
+            il.LoadArgument(0);
+            il.LoadConstantI4(parameter.Index);
+            il.OpCode(ILOpCode.Ldelem_ref);
+            if (parameter.Type == ArithType.String)
+            {
+                il.StoreLocal(parameter.Index);
+                continue;
+            }
+
+            if (parameter.Type == ArithType.Bool)
+            {
+                il.LoadLocalAddress(parameter.Index);
+                il.Call(_booleanTryParse);
+            }
+            else
+            {
+                il.LoadConstantI4(parameter.Type.IsInteger ? NumberStylesInteger : NumberStylesFloat);
+                il.Call(_cultureGetInvariant);
+                il.LoadLocalAddress(parameter.Index);
+                il.Call(_invariantTryParse[parameter.Type]);
+            }
+
+            il.Branch(ILOpCode.Brfalse, usage);
+
+            // TryParse accepts NaN/Infinity spellings and overflows to
+            // infinity; spec §5.1 admits only finite values.
+            if (parameter.Type.IsFloat)
+            {
+                il.LoadLocal(parameter.Index);
+                il.Call(_isFinite[parameter.Type]);
+                il.Branch(ILOpCode.Brfalse, usage);
+            }
+        }
+
+        // Call the user's main; a void main means exit code 0 (spec §5.1).
+        foreach (ParameterSymbol parameter in parameters)
+        {
+            il.LoadLocal(parameter.Index);
+        }
+
+        il.Call(_methodHandles[main]);
+        if (main.ReturnType == ArithType.Void)
+        {
+            il.LoadConstantI4(0);
+        }
+
+        il.OpCode(ILOpCode.Ret);
+
+        // usage: Console.Error.WriteLine("usage: ..."); return 2;
+        string usageLine = string.Join(
+            " ", ["usage:", assemblyName, .. parameters.Select(p => $"<{p.Name}: {p.Type}>")]);
+        il.MarkLabel(usage);
+        il.Call(_consoleGetError);
+        il.LoadString(_metadata.GetOrAddUserString(usageLine));
+        il.OpCode(ILOpCode.Callvirt);
+        il.Token(_textWriterWriteLine);
+        il.LoadConstantI4(2);
+        il.OpCode(ILOpCode.Ret);
+
+        // One local per parameter, in parameter order.
+        StandaloneSignatureHandle localSignature = default;
+        if (!parameters.IsEmpty)
+        {
+            BlobBuilder localsBlob = new();
+            LocalVariablesEncoder locals =
+                new BlobEncoder(localsBlob).LocalVariableSignature(parameters.Length);
+            foreach (ParameterSymbol parameter in parameters)
+            {
+                EncodeType(locals.AddVariable().Type(), parameter.Type);
+            }
+
+            localSignature = _metadata.AddStandaloneSignature(_metadata.GetOrAddBlob(localsBlob));
+        }
+
+        // Peak depths per fixed shape: the numeric TryParse call site is 4
+        // (string, styles, culture, address), the count check is 2, and the
+        // final call holds one value per parameter.
+        int maxStack = Math.Max(4, parameters.Length);
+        return _bodyStream.AddMethodBody(il, maxStack, localVariablesSignature: localSignature);
     }
 
     private int EmitFunctionBody(BoundFunction function)

@@ -61,13 +61,21 @@ internal static class Program
         {
             Description = "The .arith source file to compile and run.",
         };
+        Argument<string[]> programArguments = new("arguments")
+        {
+            Description = "Arguments passed to the program's main "
+                + "(use `--` before values that start with '-').",
+            Arity = ArgumentArity.ZeroOrMore,
+        };
         Command runCommand = new("run")
         {
             Description = "Compile and run an Arith source file, forwarding its exit code.",
         };
         runCommand.Arguments.Add(sourceArgument);
+        runCommand.Arguments.Add(programArguments);
         runCommand.SetAction(parseResult => CompilerCommands.Run(
             parseResult.GetRequiredValue(sourceArgument),
+            parseResult.GetValue(programArguments) ?? [],
             parseResult.InvocationConfiguration.Output,
             parseResult.InvocationConfiguration.Error));
         return runCommand;

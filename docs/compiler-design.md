@@ -331,6 +331,18 @@ keeping its SRM approach. Structure:
    launchers is the CLI artifact writer's job, and the `--aot` mode packages
    the same `EmitResult` bytes via `NativeAotPublisher` — so there is exactly
    one IL-generation path.
+4. **Entry-point bridge** — a `main` with parameters (spec §5.1) gets a
+   synthesized `static int32 <Main>(string[] args)` entry point that checks
+   the argument count, parses each argument with the invariant `TryParse`
+   overloads (no exception-handling regions in the generated IL), and either
+   calls the user's main or prints a usage line to stderr and returns 2. The
+   bridge is hand-shaped IL rather than a bound tree because it needs
+   `string[]`, byref locals, and BCL calls Arith's type system cannot
+   express — and it is deliberately the *only* such code. Decision rule: the
+   moment runtime support like this needs loops, exception handling, or is
+   shared by several call sites, it moves into a real C# runtime library
+   (an `Arith.Runtime.dll` shipped by the artifact writer) instead of
+   growing more hand-emitted IL.
 
 ### 4.6 Compilation facade and CLI
 

@@ -160,20 +160,25 @@ fn greet() {
 
 ### 5.1 Entry point
 
-An executable program must contain exactly one `main` function with one of the following signatures:
+An executable program must contain exactly one `main` function. `main` either returns no value or returns `i32`; any other return type is a compile-time error. If it returns `i32`, that value becomes the process exit code. A `main` function with no return value produces an exit code of `0`.
+
+`main` may declare parameters of any primitive type. Each parameter receives one command-line argument, converted from text before `main` runs:
 
 ```arith
-fn main() {
+fn main(count: i64, label: string) {
+    for i in 0..count {
+        print(label);
+    }
 }
 ```
 
-```arith
-fn main() -> i32 {
-    return 0;
-}
-```
+- The program must be invoked with exactly one argument per parameter, in order.
+- Numeric arguments are parsed culture-invariantly: integers as decimal digits with an optional leading sign, and floating-point values in decimal notation (an exponent is allowed). A value outside the parameter type's finite range — including a floating-point value whose exponent overflows to infinity — fails to parse, and the `NaN` and `Infinity` spellings are not accepted.
+- `bool` arguments must be `true` or `false`, ASCII case-insensitive.
+- `string` arguments are passed through unchanged.
+- Leading and trailing white space is ignored in non-`string` arguments.
 
-`main` takes no parameters. If it returns `i32`, that value becomes the process exit code. A `main` function with no return value produces an exit code of `0`.
+If the argument count is wrong or an argument fails to parse, the program prints a usage line describing the expected parameters to standard error and exits with code `2` without running `main`.
 
 ## 6. Variables and scope
 
@@ -453,4 +458,4 @@ The following features are candidates for future versions and are not defined in
 - Bitwise operators
 - Scientific notation and binary, octal, or hexadecimal integer literals
 - Descending ranges and custom range steps
-- Command-line arguments
+- Access to the raw command-line argument array (typed `main` parameters cover the common cases)

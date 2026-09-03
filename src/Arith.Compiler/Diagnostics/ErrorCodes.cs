@@ -44,7 +44,7 @@ public static class ErrorCodes
         new("ARITH3003", "program must contain a 'main' function");
 
     public static readonly DiagnosticDescriptor InvalidEntryPointSignature =
-        new("ARITH3004", "'main' must take no parameters and return no value or i32");
+        new("ARITH3004", "'main' must return no value or i32");
 
     public static readonly DiagnosticDescriptor UndefinedName =
         new("ARITH3005", "'{0}' is not defined");

@@ -94,6 +94,60 @@ public sealed class EmitterTests
     }
 
     [Fact]
+    public void TypedMain_GetsASynthesizedBridgeEntryPoint()
+    {
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main(n: i64) {
+                print(n);
+            }
+            """);
+        using (pe)
+        {
+            // The PE entry point must be the synthesized <Main>(string[])
+            // bridge, not the user's main(int64).
+            MethodDefinitionHandle bridge = default;
+            foreach (MethodDefinitionHandle handle in metadata.MethodDefinitions)
+            {
+                if (metadata.GetString(metadata.GetMethodDefinition(handle).Name) == "<Main>")
+                {
+                    bridge = handle;
+                }
+            }
+
+            Assert.False(bridge.IsNil, "no synthesized <Main> bridge in the metadata");
+            Assert.Equal(
+                MetadataTokens.GetToken(bridge),
+                pe.PEHeaders.CorHeader!.EntryPointTokenOrRelativeVirtualAddress);
+        }
+    }
+
+    [Fact]
+    public void ParameterlessMain_AlsoRunsBehindTheBridge()
+    {
+        // Spec §5.1 requires exactly one argument per parameter — zero
+        // included — so even a parameterless main gets the bridge with its
+        // argument-count check.
+        (PEReader pe, MetadataReader metadata) = EmitProgram("fn main() { }");
+        using (pe)
+        {
+            MethodDefinitionHandle bridge = default;
+            foreach (MethodDefinitionHandle handle in metadata.MethodDefinitions)
+            {
+                if (metadata.GetString(metadata.GetMethodDefinition(handle).Name) == "<Main>")
+                {
+                    bridge = handle;
+                }
+            }
+
+            Assert.False(bridge.IsNil, "no synthesized <Main> bridge in the metadata");
+            Assert.Equal(
+                MetadataTokens.GetToken(bridge),
+                pe.PEHeaders.CorHeader!.EntryPointTokenOrRelativeVirtualAddress);
+        }
+    }
+
+    [Fact]
     public void CheckedIntegerArithmetic_UsesOvfOpcodes()
     {
         (PEReader pe, MetadataReader metadata) = EmitProgram(
