@@ -34,7 +34,7 @@ Measured on .NET 10, arm64 macOS:
 | --- | --- |
 | `arith run tailsum.arith 100000` | completes — 100k frames fit the default stack |
 | `arith run tailsum.arith 1000000` | **StackOverflow** — the JIT did *not* apply its implicit tail-call optimization |
-| `arith build tailsum.arith --aot`, then `tailsum 100000000` | **completes** — ILC's whole-program optimizer turns the self tail call into a loop |
+| `arith build tailsum.arith --aot`, then `tailsum 100000000` | **completes** — under NativeAOT, RyuJIT recognizes the implicit self tail call and turns it into a loop |
 
 The same IL, two backends, two answers: the JIT keeps one stack frame per
 call, while NativeAOT effectively rewrites the recursion into iteration.
