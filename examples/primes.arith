@@ -1,0 +1,26 @@
+// Prints every prime up to the limit by trial division (i * i <= n keeps it
+// O(sqrt n) per candidate), then the count.
+fn is_prime(n: i64) -> bool {
+    if n < 2 {
+        return false;
+    }
+    let i = 2;
+    while i * i <= n {
+        if n % i == 0 {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fn main(limit: i64) {
+    let count = 0;
+    for n in 2..=limit {
+        if is_prime(n) {
+            print(n);
+            count += 1;
+        }
+    }
+    print(string(count) + " primes up to " + string(limit));
+}

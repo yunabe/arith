@@ -1,0 +1,12 @@
+// Naive doubly recursive Fibonacci: the classic exponential-time recursion
+// demo (fib(0) = fib(1) = 1). Inputs around 40 take noticeably long.
+fn fib(n: i64) -> i64 {
+    if n < 2 {
+        return 1;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main(n: i64) {
+    print("fib(" + string(n) + ") = " + string(fib(n)));
+}

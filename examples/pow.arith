@@ -1,0 +1,22 @@
+// Exponentiation by squaring in O(log exp) multiplications - the halving
+// trick usually written with bit shifts, expressed with / and % instead
+// (Arith has no bitwise operators). Checked arithmetic faults on overflow.
+fn power(base: i64, exp: i64) -> i64 {
+    let result = 1;
+    let b = base;
+    let e = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            result *= b;
+        }
+        e /= 2;
+        if e > 0 {
+            b *= b;
+        }
+    }
+    return result;
+}
+
+fn main(base: i64, exp: i64) {
+    print(string(base) + "^" + string(exp) + " = " + string(power(base, exp)));
+}
