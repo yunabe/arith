@@ -513,6 +513,46 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_ParameterlessMainWithAnArgument_PrintsUsageAndExits2()
+    {
+        // Zero parameters still means "exactly zero arguments" (spec §5.1).
+        string source = WriteSource("noargs.arith", "fn main() { print(\"ran\"); }");
+
+        CliResult result = CliRunner.Run("run", source, "unexpected");
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(["usage: noargs"], Lines(result.Error));
+    }
+
+    [Theory]
+    [InlineData("1e5000")]    // Overflows f64 to infinity.
+    [InlineData("Infinity")]  // Not decimal notation (spec §5.1).
+    [InlineData("-Infinity")]
+    [InlineData("NaN")]
+    public void Run_NonFiniteF64Argument_PrintsUsageAndExits2(string argument)
+    {
+        string source = WriteSource("finite.arith", "fn main(value: f64) { print(value); }");
+
+        CliResult result = CliRunner.Run("run", source, argument);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(["usage: finite <value: f64>"], Lines(result.Error));
+    }
+
+    [Fact]
+    public void Run_ExponentWithinRange_Parses()
+    {
+        string source = WriteSource("expo.arith", "fn main(value: f64) { print(value); }");
+
+        CliResult result = CliRunner.Run("run", source, "2.5e2");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["250"], Lines(result.Output));
+    }
+
+    [Fact]
     public void Run_NegativeArgument_PassesThroughAfterDoubleDash()
     {
         string source = WriteSource("neg.arith", "fn main(n: i64) { print(n * 2); }");

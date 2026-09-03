@@ -173,7 +173,7 @@ fn main(count: i64, label: string) {
 ```
 
 - The program must be invoked with exactly one argument per parameter, in order.
-- Numeric arguments are parsed culture-invariantly: integers as decimal digits with an optional leading sign, and floating-point values in decimal notation (an exponent is allowed). A value outside the parameter type's range fails to parse.
+- Numeric arguments are parsed culture-invariantly: integers as decimal digits with an optional leading sign, and floating-point values in decimal notation (an exponent is allowed). A value outside the parameter type's finite range — including a floating-point value whose exponent overflows to infinity — fails to parse, and the `NaN` and `Infinity` spellings are not accepted.
 - `bool` arguments must be `true` or `false`, ASCII case-insensitive.
 - `string` arguments are passed through unchanged.
 - Leading and trailing white space is ignored in non-`string` arguments.
