@@ -94,6 +94,48 @@ public sealed class EmitterTests
     }
 
     [Fact]
+    public void TypedMain_GetsASynthesizedBridgeEntryPoint()
+    {
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main(n: i64) {
+                print(n);
+            }
+            """);
+        using (pe)
+        {
+            // The PE entry point must be the synthesized <Main>(string[])
+            // bridge, not the user's main(int64).
+            MethodDefinitionHandle bridge = default;
+            foreach (MethodDefinitionHandle handle in metadata.MethodDefinitions)
+            {
+                if (metadata.GetString(metadata.GetMethodDefinition(handle).Name) == "<Main>")
+                {
+                    bridge = handle;
+                }
+            }
+
+            Assert.False(bridge.IsNil, "no synthesized <Main> bridge in the metadata");
+            Assert.Equal(
+                MetadataTokens.GetToken(bridge),
+                pe.PEHeaders.CorHeader!.EntryPointTokenOrRelativeVirtualAddress);
+        }
+    }
+
+    [Fact]
+    public void ParameterlessMain_IsTheEntryPointItself()
+    {
+        (PEReader pe, MetadataReader metadata) = EmitProgram("fn main() { }");
+        using (pe)
+        {
+            foreach (MethodDefinitionHandle handle in metadata.MethodDefinitions)
+            {
+                Assert.NotEqual("<Main>", metadata.GetString(metadata.GetMethodDefinition(handle).Name));
+            }
+        }
+    }
+
+    [Fact]
     public void CheckedIntegerArithmetic_UsesOvfOpcodes()
     {
         (PEReader pe, MetadataReader metadata) = EmitProgram(

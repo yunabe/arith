@@ -93,7 +93,8 @@ internal static partial class CompilerCommands
     }
 
     /// <summary>Builds into a temporary directory, runs via the dotnet host, and forwards the exit code.</summary>
-    internal static int Run(string sourcePath, TextWriter output, TextWriter error)
+    internal static int Run(
+        string sourcePath, string[] programArguments, TextWriter output, TextWriter error)
     {
         if (ValidateProgramName(sourcePath, error) is not { } name)
         {
@@ -125,7 +126,8 @@ internal static partial class CompilerCommands
                 return 1;
             }
 
-            ProcessStartInfo startInfo = new("dotnet", [Path.Combine(temporaryDirectory, name + ".dll")]);
+            ProcessStartInfo startInfo = new(
+                "dotnet", [Path.Combine(temporaryDirectory, name + ".dll"), .. programArguments]);
             ProcessResult processResult = ProcessRunner.Run(startInfo);
             output.Write(processResult.Output);
             error.Write(processResult.Error);

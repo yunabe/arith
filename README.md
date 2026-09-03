@@ -58,6 +58,7 @@ large:
 - `if` / `else`, `while`, and range-based `for` statements
 - `break` and `continue`
 - A built-in `print` function that prints one value per line
+- Typed `main` parameters that receive parsed command-line arguments
 - Explicit numeric conversions
 - Checked integer arithmetic
 - Generation of a .NET assembly with `main` as its entry point
@@ -69,7 +70,18 @@ See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) for the complete syntax and semantics.
 ```console
 arith build hello.arith [-o <dir>]   # compile into a .NET assembly
 arith build hello.arith --aot        # compile into a single native executable
-arith run hello.arith                # compile and run, forwarding the exit code
+arith run hello.arith [args...]      # compile and run, forwarding the exit code
+```
+
+A `main` with parameters receives command-line arguments, parsed per parameter
+type before it runs ([LANGUAGE_SPEC.md §5.1](LANGUAGE_SPEC.md)); on a wrong
+argument count or an unparsable value the program prints a usage line and
+exits with code 2. With `arith run`, put `--` before values that start with
+`-`:
+
+```console
+arith run greet.arith 3 hello        # fn main(count: i64, label: string)
+arith run negate.arith -- -5
 ```
 
 The source file must be named `<program-name>.arith`, where `<program-name>`

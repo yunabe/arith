@@ -353,7 +353,7 @@ public sealed class BinderTests
 
     [Theory]
     [InlineData("fn helper() { }", "ARITH3003")]                             // No main.
-    [InlineData("fn main(a: i64) { }", "ARITH3004")]
+    [InlineData("fn main() -> string { return \"\"; }", "ARITH3004")]
     [InlineData("fn main() -> i64 { return 0; }", "ARITH3004")]
     [InlineData("fn f() { } fn f() { } fn main() { }", "ARITH3001")]
     [InlineData("fn print() { } fn main() { }", "ARITH3002")]
@@ -557,6 +557,16 @@ public sealed class BinderTests
         Compilation compilation = Compile("fn f() -> i64 { return 1; print(2); } fn main() { }");
 
         Assert.Empty(compilation.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("fn main(n: i64) { print(n); }")]
+    [InlineData("fn main(a: i32, b: f64, c: bool, d: string) -> i32 { print(d); return a; }")]
+    public void MainWithPrimitiveParameters_IsAValidEntryPoint(string source)
+    {
+        // Spec §5.1: main may declare parameters of any primitive type; they
+        // receive parsed command-line arguments.
+        Assert.Empty(Compile(source).Diagnostics);
     }
 
     [Fact]

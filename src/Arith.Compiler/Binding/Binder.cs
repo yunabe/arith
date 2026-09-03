@@ -104,12 +104,13 @@ public sealed class Binder
             return;
         }
 
-        // Spec §5.1: no parameters; returns i32 or nothing. An Error return
-        // type was already reported by the parser.
+        // Spec §5.1: main returns i32 or nothing; parameters of any
+        // primitive type are allowed and receive parsed command-line
+        // arguments. An Error return type was already reported by the parser.
         bool validReturn = main.ReturnType == ArithType.Void
             || main.ReturnType == ArithType.I32
             || main.ReturnType.IsError;
-        if (main.Parameters.Length > 0 || !validReturn)
+        if (!validReturn)
         {
             FunctionDeclarationSyntax syntax = declarations.First(d => ReferenceEquals(d.Symbol, main)).Syntax;
             _diagnostics.Report(ErrorCodes.InvalidEntryPointSignature, syntax.Identifier.Span);

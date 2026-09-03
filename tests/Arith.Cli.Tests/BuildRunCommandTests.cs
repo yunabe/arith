@@ -472,6 +472,88 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_TypedMain_ReceivesParsedArguments()
+    {
+        // Spec §5.1: main parameters receive command-line arguments parsed
+        // per type with the invariant culture.
+        string source = WriteSource("typed.arith", """
+            fn main(count: i64, label: string, scale: f64, loud: bool) -> i32 {
+                for i in 0..count {
+                    print(label + " " + string(f64(i + 1) * scale));
+                }
+                if loud {
+                    print("!!!");
+                }
+                return i32(count);
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source, "3", "hey", "1.5", "true");
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(3, result.ExitCode);
+        Assert.Equal(["hey 1.5", "hey 3", "hey 4.5", "!!!"], Lines(result.Output));
+    }
+
+    [Theory]
+    [InlineData]                       // Too few arguments.
+    [InlineData("1", "2")]             // Too many.
+    [InlineData("abc")]                // Not an i64.
+    [InlineData("1.5")]                // A float is not an i64.
+    [InlineData("9223372036854775808")] // Out of i64 range.
+    public void Run_TypedMainWithBadArguments_PrintsUsageAndExits2(params string[] arguments)
+    {
+        string source = WriteSource("usage.arith", "fn main(n: i64) { print(n); }");
+
+        CliResult result = CliRunner.Run(["run", source, .. arguments]);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(["usage: usage <n: i64>"], Lines(result.Error));
+    }
+
+    [Fact]
+    public void Run_NegativeArgument_PassesThroughAfterDoubleDash()
+    {
+        string source = WriteSource("neg.arith", "fn main(n: i64) { print(n * 2); }");
+
+        CliResult result = CliRunner.Run("run", source, "--", "-21");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["-42"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_BoolArgument_IsCaseInsensitive()
+    {
+        string source = WriteSource("boolarg.arith", "fn main(flag: bool) { print(flag); }");
+
+        CliResult result = CliRunner.Run("run", source, "TRUE");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["True"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Build_TypedMain_LauncherForwardsArguments()
+    {
+        string source = WriteSource("echoarg.arith", "fn main(s: string) { print(s); }");
+        string outputDirectory = Path.Combine(_directory, "out");
+
+        CliResult build = CliRunner.Run("build", source, "-o", outputDirectory);
+        Assert.Equal(0, build.ExitCode);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            ProcessStartInfo startInfo = new(Path.Combine(outputDirectory, "echoarg"));
+            startInfo.ArgumentList.Add("via launcher");
+            ProcessResult run = ProcessRunner.Run(startInfo);
+            Assert.Equal(0, run.ExitCode);
+            Assert.Equal(["via launcher"], Lines(run.Output));
+        }
+    }
+
+    [Fact]
     public void Build_WritesRunnableArtifacts()
     {
         string source = WriteSource("hello.arith", "fn main() { print(\"hello from arith\"); }");
