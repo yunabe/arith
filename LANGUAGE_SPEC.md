@@ -260,7 +260,7 @@ Converting a `string` to another type is not supported in version 0.1.
 - Arithmetic operators accept two values of the same numeric type and produce that same type.
 - Different numeric types cannot be mixed in a binary operation.
 - `/` performs integer division for integer operands and floating-point division for floating-point operands.
-- Integer division rounds toward zero, and the remainder takes the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`, `7 / -2` is `-3`, and `7 % -2` is `1`. Whenever the division and remainder complete successfully (Section 11: division by zero and the overflowing `i64` minimum divided by `-1` are runtime errors), `a == (a / b) * b + a % b` holds. This is the convention of the underlying IL `div`/`rem` instructions and of common hardware (and of C, C#, Java, Go, and Rust); floor division is a candidate for a future version (Section 13).
+- Integer division rounds toward zero, and the remainder takes the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`, `7 / -2` is `-3`, and `7 % -2` is `1`. Whenever the division and remainder complete successfully — the runtime-error cases (division or remainder by zero, and overflow such as an integer type's minimum value divided by `-1`) are defined in Section 11 — `a == (a / b) * b + a % b` holds. This is the convention of the underlying IL `div`/`rem` instructions and of common hardware (and of C, C#, Java, Go, and Rust); floor division is a candidate for a future version (Section 13).
 - `%` is available only for two integer operands of the same type.
 - Unary `+` does not exist. Unary `-` may be applied to a numeric value.
 - `+` may also concatenate two `string` values.
