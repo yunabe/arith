@@ -97,6 +97,8 @@ public sealed class BuildRunCommandTests : IDisposable
                 print(0.00001);
                 print(10000000000000000.0);
                 print(100000000000000000.0);
+                print(100000000.0f32);
+                print(1000000000.0f32);
                 print(-0.0);
                 print(1.0 / 0.0);
                 print(-1.0 / 0.0);
@@ -114,7 +116,7 @@ public sealed class BuildRunCommandTests : IDisposable
             "-3", "-1", "-3", "1",
             "1", "-1", "2", "-2",
             "0.30000000000000004", "0.33333334", "250", "1E-05",
-            "10000000000000000", "1E+17", "-0",
+            "10000000000000000", "1E+17", "100000000", "1E+09", "-0",
             "Infinity", "-Infinity", "NaN",
             "7",
         ];

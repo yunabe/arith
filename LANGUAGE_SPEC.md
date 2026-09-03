@@ -243,7 +243,7 @@ Any primitive value may be converted to a string with `string(value)`; the forma
 
 - A `bool` value converts to `"true"` or `"false"` — the language's own literal spellings.
 - An integer converts to its decimal digits, with a leading `-` when negative.
-- A floating-point value converts to the shortest decimal string that converts back to exactly the same value (.NET's round-trip formatting): `string(0.1 + 0.2)` is `"0.30000000000000004"`, and for the `f32` value `1.0f32 / 3.0f32` it is `"0.33333334"`. A whole number has no fractional part (`string(250.0)` is `"250"`), and negative zero is `"-0"`. Magnitudes below `0.0001` or of at least 10¹⁷ use exponent notation with a capital `E` and at least two exponent digits: `string(0.00001)` is `"1E-05"` and `string(100000000000000000.0)` is `"1E+17"`, while `string(10000000000000000.0)` is still `"10000000000000000"`.
+- A floating-point value converts to the shortest decimal string that converts back to exactly the same value (.NET's round-trip formatting): `string(0.1 + 0.2)` is `"0.30000000000000004"`, and for the `f32` value `1.0f32 / 3.0f32` it is `"0.33333334"`. A whole number has no fractional part (`string(250.0)` is `"250"`), and negative zero is `"-0"`. Values switch to exponent notation — a capital `E` and at least two exponent digits — when the magnitude is below `0.0001` (both floating-point types) or large: at least 10¹⁷ for `f64` and at least 10⁹ for `f32`. So `string(0.00001)` is `"1E-05"`, `string(100000000000000000.0)` is `"1E+17"` while `string(10000000000000000.0)` is still `"10000000000000000"`, and `string(1000000000.0f32)` is `"1E+09"` while `string(100000000.0f32)` is still `"100000000"`.
 - Non-finite floating-point values convert to `"NaN"`, `"Infinity"`, and `"-Infinity"`.
 - A `string` converts to itself.
 
@@ -260,7 +260,7 @@ Converting a `string` to another type is not supported in version 0.1.
 - Arithmetic operators accept two values of the same numeric type and produce that same type.
 - Different numeric types cannot be mixed in a binary operation.
 - `/` performs integer division for integer operands and floating-point division for floating-point operands.
-- Integer division rounds toward zero, and the remainder takes the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`, `7 / -2` is `-3`, and `7 % -2` is `1`. `a == (a / b) * b + a % b` therefore always holds. This is the convention of the underlying IL `div`/`rem` instructions and of common hardware (and of C, C#, Java, Go, and Rust); floor division is a candidate for a future version (Section 13).
+- Integer division rounds toward zero, and the remainder takes the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`, `7 / -2` is `-3`, and `7 % -2` is `1`. Whenever the division and remainder complete successfully (Section 11: division by zero and the overflowing `i64` minimum divided by `-1` are runtime errors), `a == (a / b) * b + a % b` holds. This is the convention of the underlying IL `div`/`rem` instructions and of common hardware (and of C, C#, Java, Go, and Rust); floor division is a candidate for a future version (Section 13).
 - `%` is available only for two integer operands of the same type.
 - Unary `+` does not exist. Unary `-` may be applied to a numeric value.
 - `+` may also concatenate two `string` values.

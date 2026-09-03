@@ -163,4 +163,9 @@ Arrays, structs, classes, closures, generics, modules, and `null` are outside th
 
 ## License
 
-Arith is released under the [MIT License](LICENSE).
+The Arith compiler and this repository are released under the
+[MIT License](LICENSE). Programs you write in Arith are your own; Arith
+claims no license over them or over the assemblies compiled from them. Note
+that a `--aot` executable embeds .NET runtime components, so distributing
+one must additionally comply with the applicable .NET licenses and notices —
+see the official [.NET license information](https://github.com/dotnet/core/blob/main/license-information.md).
