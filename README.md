@@ -107,7 +107,8 @@ official NativeAOT toolchain into one native executable that runs without the
 `dotnet` host (requires the platform's native linker, e.g. Xcode Command Line
 Tools on macOS; see [docs/il-emission-notes.md](docs/il-emission-notes.md)).
 
-On failure, diagnostics are printed as `file:line:col: error ARITHxxxx: message`.
+On failure, diagnostics are printed as `file:line:col: error ARITHxxxx: message`;
+every code is listed in [docs/diagnostics.md](docs/diagnostics.md).
 
 ## Compiler pipeline
 
@@ -158,4 +159,8 @@ checking, IL generation for expressions and control flow, assembly emission
 and execution, and diagnostics with test coverage — are implemented; language
 v0.1 is complete.
 
-Arrays, structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.1 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)).
+Arrays, structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.1 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)). Released versions are recorded in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+Arith is released under the [MIT License](LICENSE).

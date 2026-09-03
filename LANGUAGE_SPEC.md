@@ -89,6 +89,7 @@ Arith supports decimal integer literals.
 - An integer literal without a suffix has the default type `i64`.
 - The `i32` and `i64` suffixes explicitly select a type.
 - When an expected integer type is available, an unsuffixed literal may take that type if its value can be represented exactly.
+- Leading zeros are allowed and carry no meaning: `007` is the value `7`.
 
 ```arith
 let x: i32 = 10;       // Treated as i32
@@ -114,7 +115,7 @@ Arith supports decimal floating-point literals containing a decimal point.
 - The `f32` and `f64` suffixes explicitly select a type.
 - When an expected floating-point type is available, an unsuffixed literal may take that type.
 
-Scientific notation and literal forms for `NaN` and infinity are not supported in version 0.1.
+Scientific notation and literal forms for `NaN` and infinity are not supported in version 0.1. (Command-line arguments to `main` follow a separate, more permissive grammar; see Section 5.1.)
 
 ### 4.4 String literals
 
@@ -174,6 +175,7 @@ fn main(count: i64, label: string) {
 
 - The program must be invoked with exactly one argument per parameter, in order.
 - Numeric arguments are parsed culture-invariantly: integers as decimal digits with an optional leading sign, and floating-point values in decimal notation (an exponent is allowed). A value outside the parameter type's finite range — including a floating-point value whose exponent overflows to infinity — fails to parse, and the `NaN` and `Infinity` spellings are not accepted.
+- This argument grammar is deliberately not the source-literal grammar of Section 4: an exponent such as `2.5e2` is accepted as an argument although it is not a valid source literal, and conversely `Infinity` and `NaN` are rejected as arguments although `print` can produce them (Section 7) — a printed non-finite value cannot be fed back in as an argument.
 - `bool` arguments must be `true` or `false`, ASCII case-insensitive.
 - `string` arguments are passed through unchanged.
 - Leading and trailing white space is ignored in non-`string` arguments.
@@ -233,9 +235,19 @@ The following numeric conversions are supported:
 - Any floating-point type to any floating-point type
 - Any floating-point type to any integer type
 
+Converting a floating-point value to an integer type discards the fractional part, rounding toward zero: `i64(1.9)` is `1` and `i64(-1.9)` is `-1`, and a value exactly between two integers is not rounded away from zero either (`i64(2.5)` is `2`).
+
 Converting to an integer produces a runtime error if the result is out of range. Converting `NaN` or infinity to an integer also produces a runtime error. Conversions that lose precision are allowed. Conversions between `bool` and a numeric type are not supported.
 
-Any primitive value may be converted to a string with `string(value)`. A `bool` value converts to `"true"` or `"false"` — the language's own literal spellings. Converting a `string` to another type is not supported in version 0.1.
+Any primitive value may be converted to a string with `string(value)`; the formatting is culture-independent:
+
+- A `bool` value converts to `"true"` or `"false"` — the language's own literal spellings.
+- An integer converts to its decimal digits, with a leading `-` when negative.
+- A floating-point value converts to the shortest decimal string that converts back to exactly the same value (.NET's round-trip formatting): `string(0.1 + 0.2)` is `"0.30000000000000004"`, and for the `f32` value `1.0f32 / 3.0f32` it is `"0.33333334"`. A whole number has no fractional part (`string(250.0)` is `"250"`), and negative zero is `"-0"`. Magnitudes below `0.0001` or of at least 10¹⁷ use exponent notation with a capital `E` and at least two exponent digits: `string(0.00001)` is `"1E-05"` and `string(100000000000000000.0)` is `"1E+17"`, while `string(10000000000000000.0)` is still `"10000000000000000"`.
+- Non-finite floating-point values convert to `"NaN"`, `"Infinity"`, and `"-Infinity"`.
+- A `string` converts to itself.
+
+Converting a `string` to another type is not supported in version 0.1.
 
 ## 8. Operators
 
@@ -248,6 +260,7 @@ Any primitive value may be converted to a string with `string(value)`. A `bool` 
 - Arithmetic operators accept two values of the same numeric type and produce that same type.
 - Different numeric types cannot be mixed in a binary operation.
 - `/` performs integer division for integer operands and floating-point division for floating-point operands.
+- Integer division rounds toward zero, and the remainder takes the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`, `7 / -2` is `-3`, and `7 % -2` is `1`. `a == (a / b) * b + a % b` therefore always holds. This is the convention of the underlying IL `div`/`rem` instructions and of common hardware (and of C, C#, Java, Go, and Rust); floor division is a candidate for a future version (Section 13).
 - `%` is available only for two integer operands of the same type.
 - Unary `+` does not exist. Unary `-` may be applied to a numeric value.
 - `+` may also concatenate two `string` values.
@@ -370,7 +383,7 @@ print(3.14);
 print("hello");
 ```
 
-It accepts `bool`, `i32`, `i64`, `f32`, `f64`, and `string` values. Each value prints as its `string(value)` conversion (Section 7): numeric formatting is culture-independent, and a `bool` prints as `true` or `false`.
+It accepts `bool`, `i32`, `i64`, `f32`, `f64`, and `string` values. Each value prints exactly as its `string(value)` conversion (Section 7), so `print(true)` prints `true`, `print(0.1 + 0.2)` prints `0.30000000000000004`, and `print(1.0 / 0.0)` prints `Infinity`.
 
 `print` is a compiler-recognized built-in rather than a user-defined function. A user cannot declare a function named `print`.
 
@@ -457,5 +470,6 @@ The following features are candidates for future versions and are not defined in
 - Character types and character literals
 - Bitwise operators
 - Scientific notation and binary, octal, or hexadecimal integer literals
+- Floor division and a divisor-signed remainder (Python's `//` and `%`), whose non-negative remainder is the natural fit for cyclic indexing once arrays exist
 - Descending ranges and custom range steps
 - Access to the raw command-line argument array (typed `main` parameters cover the common cases)
