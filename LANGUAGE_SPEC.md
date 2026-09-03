@@ -235,7 +235,7 @@ The following numeric conversions are supported:
 
 Converting to an integer produces a runtime error if the result is out of range. Converting `NaN` or infinity to an integer also produces a runtime error. Conversions that lose precision are allowed. Conversions between `bool` and a numeric type are not supported.
 
-Any primitive value may be converted to a string with `string(value)`. Converting a `string` to another type is not supported in version 0.1.
+Any primitive value may be converted to a string with `string(value)`. A `bool` value converts to `"true"` or `"false"` — the language's own literal spellings. Converting a `string` to another type is not supported in version 0.1.
 
 ## 8. Operators
 
@@ -370,7 +370,7 @@ print(3.14);
 print("hello");
 ```
 
-It accepts `bool`, `i32`, `i64`, `f32`, `f64`, and `string` values. Numeric formatting for conversion and output is culture-independent.
+It accepts `bool`, `i32`, `i64`, `f32`, `f64`, and `string` values. Each value prints as its `string(value)` conversion (Section 7): numeric formatting is culture-independent, and a `bool` prints as `true` or `false`.
 
 `print` is a compiler-recognized built-in rather than a user-defined function. A user cannot declare a function named `print`.
 

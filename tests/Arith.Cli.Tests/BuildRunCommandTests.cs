@@ -67,7 +67,7 @@ public sealed class BuildRunCommandTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         string[] expected =
         [
-            "42", "answer above", "3.5", "1.5", "True",
+            "42", "answer above", "3.5", "1.5", "true",
             "-42", "-9223372036854775808", "1", "30",
         ];
         Assert.Equal(expected, Lines(result.Output));
@@ -344,7 +344,7 @@ public sealed class BuildRunCommandTests : IDisposable
         CliResult result = CliRunner.Run("run", source);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["False", "True"], Lines(result.Output));
+        Assert.Equal(["false", "true"], Lines(result.Output));
     }
 
     [Fact]
@@ -364,7 +364,7 @@ public sealed class BuildRunCommandTests : IDisposable
         CliResult result = CliRunner.Run("run", source);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["NaN", "False", "False", "True"], Lines(result.Output));
+        Assert.Equal(["NaN", "false", "false", "true"], Lines(result.Output));
     }
 
     [Fact]
@@ -391,7 +391,7 @@ public sealed class BuildRunCommandTests : IDisposable
         CliResult result = CliRunner.Run("run", source);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["True", "False"], Lines(result.Output));
+        Assert.Equal(["true", "false"], Lines(result.Output));
     }
 
     [Fact]
@@ -416,7 +416,7 @@ public sealed class BuildRunCommandTests : IDisposable
 
         Assert.Equal("", result.Error);
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["2.5", "1", "-7", "answer=2", "True/1.5"], Lines(result.Output));
+        Assert.Equal(["2.5", "1", "-7", "answer=2", "true/1.5"], Lines(result.Output));
     }
 
     [Theory]
@@ -449,7 +449,7 @@ public sealed class BuildRunCommandTests : IDisposable
         CliResult result = CliRunner.Run("run", source);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["True", "False"], Lines(result.Output));
+        Assert.Equal(["true", "false"], Lines(result.Output));
     }
 
     [Fact]
@@ -571,7 +571,7 @@ public sealed class BuildRunCommandTests : IDisposable
         CliResult result = CliRunner.Run("run", source, "TRUE");
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["True"], Lines(result.Output));
+        Assert.Equal(["true"], Lines(result.Output));
     }
 
     [Fact]

@@ -41,7 +41,6 @@ public sealed class Emitter
     private MemberReferenceHandle _cultureGetInvariant;
     private MemberReferenceHandle _stringEquals;
     private MemberReferenceHandle _stringConcat;
-    private MemberReferenceHandle _booleanToString;
     private MemberReferenceHandle _booleanTryParse;
     private MemberReferenceHandle _consoleGetError;
     private MemberReferenceHandle _textWriterWriteLine;
@@ -219,16 +218,7 @@ public sealed class Emitter
                     p.AddParameter().Type().String();
                 }));
 
-        // bool-to-string ("True"/"False") is culture-independent already.
         TypeReferenceHandle booleanType = AddTypeReference(systemRuntime, "System", "Boolean");
-        _booleanToString = _metadata.AddMemberReference(
-            booleanType,
-            _metadata.GetOrAddString("ToString"),
-            MethodSignature(
-                isInstanceMethod: true,
-                returnType: r => r.Type().String(),
-                parameterCount: 0,
-                parameters: _ => { }));
 
         // Numeric print must be culture-invariant (spec §10.1, design §4.5):
         // the typed Console.WriteLine overloads format through the current
@@ -826,11 +816,11 @@ public sealed class Emitter
         }
 
         /// <summary>
-        /// Replaces the value on the stack with its culture-invariant string
-        /// form — the shared lowering behind `print` and `string(value)`.
-        /// Numerics call ToString(CultureInfo.InvariantCulture), bool calls
-        /// its (already culture-independent) ToString; both are instance
-        /// calls on a value type, hence the temp local for the address.
+        /// Replaces the value on the stack with its string form — the shared
+        /// lowering behind `print` and `string(value)`. A bool becomes the
+        /// language's own literal spelling, "true" or "false" (spec §7).
+        /// Numerics call ToString(CultureInfo.InvariantCulture), an instance
+        /// call on a value type, hence the temp local for the address.
         /// </summary>
         private void EmitConvertToString(ArithType type)
         {
@@ -839,19 +829,28 @@ public sealed class Emitter
                 return;
             }
 
+            if (type == ArithType.Bool)
+            {
+                LabelHandle trueLabel = _il.DefineLabel();
+                LabelHandle end = _il.DefineLabel();
+                _il.Branch(ILOpCode.Brtrue, trueLabel);
+                Pop();
+                _il.LoadString(_emitter._metadata.GetOrAddUserString("false"));
+                Push();
+                _il.Branch(ILOpCode.Br, end);
+                SetDepth(_depth - 1);
+                _il.MarkLabel(trueLabel);
+                _il.LoadString(_emitter._metadata.GetOrAddUserString("true"));
+                Push();
+                _il.MarkLabel(end);
+                return;
+            }
+
             int temp = GetPrintTemp(type);
             _il.StoreLocal(temp);
             Pop();
             _il.LoadLocalAddress(temp);
             Push();
-            if (type == ArithType.Bool)
-            {
-                _il.Call(_emitter._booleanToString);
-                Pop();
-                Push();
-                return;
-            }
-
             _il.Call(_emitter._cultureGetInvariant);
             Push();
             _il.Call(_emitter._invariantToString[type]);
