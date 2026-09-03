@@ -74,6 +74,56 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_NumericRoundingAndFormatting_MatchTheSpec()
+    {
+        // Pins the behaviors LANGUAGE_SPEC sections 4.2, 7, 8.1, and 10.1
+        // spell out: truncating integer division with a dividend-signed
+        // remainder, float-to-integer rounding toward zero, round-trip float
+        // formatting (including negative zero and the E-notation threshold),
+        // the NaN/Infinity spellings, and leading zeros in literals.
+        string source = WriteSource("numerics.arith", """
+            fn main() {
+                print(-7 / 2);
+                print(-7 % 2);
+                print(7 / -2);
+                print(7 % -2);
+                print(i64(1.9));
+                print(i64(-1.9));
+                print(i64(2.5));
+                print(i32(-2.5));
+                print(0.1 + 0.2);
+                print(1.0f32 / 3.0f32);
+                print(250.0);
+                print(0.00001);
+                print(10000000000000000.0);
+                print(100000000000000000.0);
+                print(100000000.0f32);
+                print(1000000000.0f32);
+                print(-0.0);
+                print(1.0 / 0.0);
+                print(-1.0 / 0.0);
+                print(0.0 / 0.0);
+                print(007);
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        string[] expected =
+        [
+            "-3", "-1", "-3", "1",
+            "1", "-1", "2", "-2",
+            "0.30000000000000004", "0.33333334", "250", "1E-05",
+            "10000000000000000", "1E+17", "100000000", "1E+09", "-0",
+            "Infinity", "-Infinity", "NaN",
+            "7",
+        ];
+        Assert.Equal(expected, Lines(result.Output));
+    }
+
+    [Fact]
     public void Run_MainReturnValue_BecomesTheExitCode()
     {
         string source = WriteSource("exit7.arith", "fn main() -> i32 { return 7; }");

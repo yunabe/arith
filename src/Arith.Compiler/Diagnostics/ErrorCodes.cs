@@ -52,6 +52,9 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor UndefinedFunction =
         new("ARITH3006", "function '{0}' is not defined");
 
+    // ARITH3007 was never assigned and stays reserved: codes are stable once
+    // released, so the gap is kept rather than renumbering the rest.
+
     public static readonly DiagnosticDescriptor WrongArgumentCount =
         new("ARITH3008", "function '{0}' takes {1} argument(s) but was given {2}");
 

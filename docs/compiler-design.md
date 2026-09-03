@@ -1,8 +1,10 @@
 # Arith compiler design (v0.1)
 
-This document describes the planned architecture of the Arith compiler: how the
-code is organized into projects, what the pipeline stages are, which data
-structures flow between them, and in what order the pieces should be built.
+This document describes the architecture of the Arith compiler: how the code
+is organized into projects, what the pipeline stages are, which data
+structures flow between them, and the order in which the pieces were built.
+It was written before implementation and kept in step with it, so it reads
+as both the design and the as-built description.
 [LANGUAGE_SPEC.md](../LANGUAGE_SPEC.md) defines *what* to compile; this document
 defines *how*. The IL-emission techniques it builds on are described in
 [il-emission-notes.md](il-emission-notes.md).
