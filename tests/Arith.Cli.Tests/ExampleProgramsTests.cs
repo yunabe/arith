@@ -18,10 +18,8 @@ public sealed class ExampleProgramsTests
     [Theory]
     [InlineData("fib.arith", new[] { "10" }, "fib(10) = 89")]
     [InlineData("factorial.arith", new[] { "20" }, "20! = 2432902008176640000")]
-    // Correctness only: a depth safely inside any platform's default stack.
-    // The deep-recursion behavior is the README's documented *manual*
-    // experiment, because the stack-overflow boundary depends on the
-    // platform's stack size and the JIT's tail-call heuristics.
+    // Correctness at a depth safely inside any platform's default stack;
+    // Tailsum_DeepRecursion_OverflowsOnTheJit below pins the deep behavior.
     [InlineData("tailsum.arith", new[] { "1000" }, "sum(1..=1000) = 500500")]
     [InlineData("gcd.arith", new[] { "252", "105" }, "gcd(252, 105) = 21")]
     [InlineData("primes.arith", new[] { "30" }, "10 primes up to 30")]
@@ -73,6 +71,24 @@ public sealed class ExampleProgramsTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Equal("", result.Output);
         Assert.Contains("System.OverflowException", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tailsum_DeepRecursion_OverflowsOnTheJit()
+    {
+        // Pins the README experiment's JIT half in a platform-independent
+        // way: exact overflow *boundaries* vary with each platform's stack
+        // size, but 50 million frames need hundreds of megabytes of stack,
+        // which no default configuration provides — so without tail-call
+        // optimization this must fault everywhere. If this test ever starts
+        // FAILING because the program succeeds, the JIT has begun applying
+        // its implicit tail-call optimization to Arith's self-calls: update
+        // the README's experiment table rather than the example. (NativeAOT
+        // already turns this call into a loop; see the README.)
+        CliResult result = CliRunner.Run("run", ExamplePath("tailsum.arith"), "50000000");
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Equal("", result.Output);
     }
 
     [Fact]

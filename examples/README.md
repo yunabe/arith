@@ -38,12 +38,15 @@ Measured on .NET 10, arm64 macOS:
 
 The same IL, two backends, two answers: the JIT keeps one stack frame per
 call, while NativeAOT effectively rewrites the recursion into iteration.
-This is a *manual* experiment by design: the safe depth depends on the
+The exact overflow *boundary* is platform-dependent — it varies with the
 platform's stack size (default .NET thread stacks differ across
-Linux/macOS/Windows) as well as the JIT's tail-call heuristics, so the
-automated example test only checks correctness at a small depth. Emitting
-the `tail.` prefix from the compiler would make the JIT behavior
-deterministic — a nice future experiment.
+Linux/macOS/Windows) and the JIT's heuristics — so the automated tests
+avoid it: they check correctness at a small depth and pin only the
+platform-independent extreme, a depth so large that without tail-call
+optimization it must overflow on any configuration. Probing where *your*
+machine's boundary lies is the manual part of the experiment. Emitting the
+`tail.` prefix from the compiler would make the JIT behavior deterministic
+— a nice future experiment.
 
 ## Other things worth trying
 
