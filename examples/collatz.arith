@@ -1,0 +1,21 @@
+// Counts the steps of the Collatz (3n + 1) sequence down to 1. Whether every
+// start eventually reaches 1 is a famous open problem; 27 famously wanders
+// for 111 steps. The 3 * n + 1 step is checked arithmetic, so a sequence
+// that left i64 would fault instead of silently wrapping.
+fn collatz_steps(start: i64) -> i64 {
+    let n = start;
+    let steps = 0;
+    while n != 1 {
+        if n % 2 == 0 {
+            n /= 2;
+        } else {
+            n = 3 * n + 1;
+        }
+        steps += 1;
+    }
+    return steps;
+}
+
+fn main(start: i64) {
+    print("collatz(" + string(start) + ") reaches 1 after " + string(collatz_steps(start)) + " steps");
+}

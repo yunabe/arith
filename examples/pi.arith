@@ -1,0 +1,18 @@
+// Approximates pi with the Nilakantha series
+//   pi = 3 + 4/(2*3*4) - 4/(4*5*6) + 4/(6*7*8) - ...
+// which gains roughly three digits per thousand terms. Floating-point
+// output is culture-invariant, so the result prints with a '.' everywhere.
+fn nilakantha(terms: i64) -> f64 {
+    let pi = 3.0;
+    let sign = 1.0;
+    for k in 1..=terms {
+        let n = f64(2 * k);
+        pi += sign * 4.0 / (n * (n + 1.0) * (n + 2.0));
+        sign = -sign;
+    }
+    return pi;
+}
+
+fn main(terms: i64) {
+    print("pi ~= " + string(nilakantha(terms)) + "  (" + string(terms) + " terms)");
+}

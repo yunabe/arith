@@ -143,6 +143,7 @@ The `version` command prints the CLI version:
 
 The repository is laid out as follows:
 
+- `examples/` — runnable example programs, from fizzbuzz to an ASCII Mandelbrot and a tail-call experiment (see [examples/README.md](examples/README.md))
 - `src/Arith.Compiler` — the compiler as a library (source text, diagnostics, lexer, parser, binder, and IL emitter; architecture in [docs/compiler-design.md](docs/compiler-design.md))
 - `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
 - `src/Arith.Cli` — the `arith` command-line tool (`build`, `run`, `version`), including the artifact writer and the NativeAOT packaging behind `build --aot`
