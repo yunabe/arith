@@ -1,6 +1,14 @@
 # Arith Language Specification
 
-This document defines version 0.1 of the Arith programming language.
+This document defines version 0.2 of the Arith programming language.
+
+> [!NOTE]
+> **Status: draft.** Version 0.2 is not implemented yet; the latest released
+> language version is 0.1 (git tag `v0.1.0` holds its specification and
+> compiler). Version 0.2 adds, on top of 0.1: array types `[]T` with
+> literals, indexing, and `len`; `for` over arrays; `fn main(args:
+> []string)`; conversions from `string` to the other primitive types; and
+> interpolated `f"..."` strings.
 
 ## 1. General rules
 
@@ -49,7 +57,7 @@ Block comments cannot be nested.
 
 ## 3. Types
 
-Arith version 0.1 provides the following types:
+Arith version 0.2 provides the following primitive types:
 
 | Type | Meaning | Corresponding .NET type |
 | --- | --- | --- |
@@ -60,9 +68,29 @@ Arith version 0.1 provides the following types:
 | `f64` | IEEE 754 double-precision floating-point number | `System.Double` |
 | `string` | UTF-16 string | `System.String` |
 
-A function either returns a value of one of these types or returns no value. A function that returns no value omits the `->` return type clause and corresponds to .NET `void`. `void` is not a type name in Arith source and cannot be used for a variable or parameter.
+A function either returns a value of some Arith type or returns no value. A function that returns no value omits the `->` return type clause and corresponds to .NET `void`. `void` is not a type name in Arith source and cannot be used for a variable or parameter.
 
-Arith has no `null` value. A `string` value is always non-null.
+Arith has no `null` value. A `string` value is always non-null, and so is an array.
+
+### 3.1 Array types
+
+For each primitive type `T`, `[]T` is the type of arrays of `T`, corresponding to the .NET array type `T[]`:
+
+```arith
+fn sum(values: []i64) -> i64 {
+    let total = 0;
+    for v in values {
+        total += v;
+    }
+    return total;
+}
+```
+
+- An array has a fixed length, set when it is created (Section 4.5) and returned by `len` (Section 10.2). Its elements are mutable.
+- Arrays of arrays (`[][]T`) are not supported in version 0.2.
+- An array type may be used anywhere a type is expected: variables, parameters, and return types.
+- Arrays are **reference values**: assigning an array to a variable or passing it to a function shares the one underlying array rather than copying it, so element writes through one name are visible through the others.
+- No operators apply to arrays themselves — not even `==`/`!=` — and `print` does not accept them; only indexing (Section 8.6), `len`, and `for` (Section 9.3) consume arrays. Comparing or printing arrays is a candidate for a future version.
 
 ## 4. Literals
 
@@ -115,7 +143,7 @@ Arith supports decimal floating-point literals containing a decimal point.
 - The `f32` and `f64` suffixes explicitly select a type.
 - When an expected floating-point type is available, an unsuffixed literal may take that type.
 
-Scientific notation and literal forms for `NaN` and infinity are not supported in version 0.1. (Command-line arguments to `main` follow a separate, more permissive grammar; see Section 5.1.)
+Scientific notation and literal forms for `NaN` and infinity are not supported in version 0.2. (Command-line arguments to `main` and string conversions follow a separate, more permissive grammar; see Sections 5.1 and 7.)
 
 ### 4.4 String literals
 
@@ -135,6 +163,40 @@ The following escape sequences are supported:
 | `\t` | Horizontal tab |
 | `\"` | Double quote |
 | `\\` | Backslash |
+
+### 4.5 Array creation expressions
+
+An array is created either by listing its elements or by repeating one value:
+
+```arith
+let primes = [2, 3, 5, 7];       // []i64 with length 4
+let zeros = [0; count];          // count zeros
+let names: []string = [];        // an empty array needs an expected type
+```
+
+Element-list form `[e1, e2, …, en]`:
+
+- The elements are evaluated left to right.
+- When an expected array type `[]T` is available (Section 7), every element takes `T` as its expected type and must have type `T`.
+- Without an expected array type, every element is typed on its own (unsuffixed literals take their defaults) and all elements must have the same type, which becomes the element type. The empty list `[]` is a compile-time error in this case, since it has no element type.
+
+Repeat form `[value; count]`:
+
+- `value` is evaluated once and every element is initialized to that one result (for an array element type this would share the same reference, but nested arrays are not supported in version 0.2).
+- `count` must have type `i64` (an expected type for unsuffixed literals) and is evaluated once, after `value`. A negative `count` is a runtime error; zero is allowed.
+
+### 4.6 Interpolated strings
+
+An interpolated string is a string literal prefixed with `f` that may embed expressions with `${…}`:
+
+```arith
+print(f"x = ${x}, y + z = ${y + z}");
+```
+
+- `f"x = ${x}"` is exactly equivalent to `"x = " + string(x)`: the literal is the concatenation of its text segments and, for each hole, the `string(…)` conversion (Section 7) of the hole's expression, evaluated left to right.
+- A hole may contain any expression of any primitive type, including string expressions and further interpolated strings.
+- The escape sequences of Section 4.4 apply, plus `\$` for a literal dollar sign. Inside an interpolated string, `$` must either start a `${…}` hole or be escaped; a bare `$` is a compile-time error (reserving shorthand like `$name` for a future version).
+- In a plain (non-`f`) string literal, `$` has no special meaning and `\$` is not a valid escape.
 
 ## 5. Functions
 
@@ -181,6 +243,18 @@ fn main(count: i64, label: string) {
 - Leading and trailing white space is ignored in non-`string` arguments.
 
 If the argument count is wrong or an argument fails to parse, the program prints a usage line describing the expected parameters to standard error and exits with code `2` without running `main`.
+
+Alternatively, `main` may declare exactly one parameter of type `[]string`, which receives **all** command-line arguments verbatim (the program name is not included):
+
+```arith
+fn main(args: []string) {
+    for arg in args {
+        print(arg);
+    }
+}
+```
+
+This form accepts any number of arguments, performs no parsing, and never produces the usage-line exit; programs convert individual arguments themselves (Section 7). The `[]string` parameter cannot be combined with typed parameters, and `[]string` is the only array type allowed on `main`.
 
 ## 6. Variables and scope
 
@@ -247,7 +321,19 @@ Any primitive value may be converted to a string with `string(value)`; the forma
 - Non-finite floating-point values convert to `"NaN"`, `"Infinity"`, and `"-Infinity"`.
 - A `string` converts to itself.
 
-Converting a `string` to another type is not supported in version 0.1.
+A `string` may be converted to any other primitive type. The text is parsed with exactly the grammar of a `main` argument of that type (Section 5.1): culture-invariant, optional sign and exponent for numerics, finite values only, case-insensitive `true`/`false` for `bool`, surrounding white space ignored. A string that fails to parse is a **runtime error** — consistent with the other checked conversions in this section — so `i64("12")` is `12` and `i64(string(x)) == x` holds for every integer `x`, while `i64("12.5")` and `bool("yes")` fail at runtime:
+
+```arith
+fn main(args: []string) {
+    let total = 0;
+    for arg in args {
+        total += i64(arg);
+    }
+    print(f"total = ${total}");
+}
+```
+
+Conversions do not apply to array types: `[]T` is not convertible to or from anything.
 
 ## 8. Operators
 
@@ -299,13 +385,21 @@ Logical operators accept only `bool` values. `&&` and `||` use short-circuit eva
 
 Except that the left-hand side is evaluated only once, a compound assignment is equivalent to the corresponding binary operation followed by a regular assignment. Assignments and compound assignments are statements and do not produce values.
 
+The target of an assignment is a variable name or an element of an array-typed variable:
+
+```arith
+counts[i] += 1;
+```
+
+For an element target `name[index]`, the variable and the index are evaluated (in that order) before the right-hand side, and — as for every index expression — the index must be in range at the time of the write (Section 8.6).
+
 ### 8.5 Precedence
 
 Operators are listed below from highest to lowest precedence. Binary operators on the same row are left-associative.
 
 | Precedence | Operator or construct |
 | --- | --- |
-| 1 | `()`, function calls |
+| 1 | `()`, function calls, indexing `[]` |
 | 2 | unary `-`, `!` |
 | 3 | `*`, `/`, `%` |
 | 4 | `+`, `-` |
@@ -315,6 +409,10 @@ Operators are listed below from highest to lowest precedence. Binary operators o
 | 8 | `||` |
 
 Assignment is not an expression.
+
+### 8.6 Indexing
+
+`a[i]` reads element `i` of an array-typed expression `a` and has the array's element type. Indexes have type `i64` (an expected type for unsuffixed literals) and count from zero. An index that is negative or not less than `len(a)` is a runtime error, for reads and writes alike. Indexing applies to any array-typed expression, including a call result: `rows(3)[0]`.
 
 ## 9. Control flow
 
@@ -364,7 +462,19 @@ for i in 0..=10 {
 - The loop variable has type `i64` and is available only inside the loop body.
 - The loop variable cannot be reassigned.
 - If the start is greater than the end, the loop performs no iterations.
-- Descending ranges, custom steps, and ranges as first-class values are not supported in version 0.1.
+- Descending ranges, custom steps, and ranges as first-class values are not supported in version 0.2.
+
+A `for` loop may also iterate over an array:
+
+```arith
+for value in values {
+    print(value);
+}
+```
+
+- The expression after `in` must have an array type; it is evaluated once, before the loop.
+- The loop visits the indexes `0` through `len(a) - 1` in order; each iteration reads the element at the current index when the iteration starts, so element writes are visible to later iterations.
+- The loop variable has the array's element type and follows the same rules as a range loop's variable: scoped to the body and not reassignable.
 
 ### 9.4 `break` and `continue`
 
@@ -387,17 +497,31 @@ It accepts `bool`, `i32`, `i64`, `f32`, `f64`, and `string` values. Each value p
 
 `print` is a compiler-recognized built-in rather than a user-defined function. A user cannot declare a function named `print`.
 
+### 10.2 `len`
+
+`len` returns the length of an array as an `i64`:
+
+```arith
+let values = [1, 2, 3];
+print(len(values));     // 3
+```
+
+It accepts exactly one argument, of any array type. Like `print`, `len` is a compiler-recognized built-in: a user cannot declare a function named `len`, and — unlike `print` — a `len` call is an expression, usable anywhere a value of type `i64` is. `len` does not accept strings; string length is a candidate for a future version.
+
 ## 11. Runtime behavior
 
 - Integer addition, subtraction, multiplication, division, remainder, and unary negation are checked operations.
 - Integer overflow produces a runtime error.
 - Integer division or remainder by zero produces a runtime error.
 - Floating-point arithmetic follows .NET and IEEE 754 behavior; division by zero may produce infinity or `NaN`.
+- An out-of-range array index produces a runtime error, for reads and writes alike.
+- A negative length in an array repeat expression produces a runtime error.
+- A `string` conversion whose text fails to parse produces a runtime error.
 - Function arguments and subexpressions are evaluated from left to right.
 
 ## 12. Grammar
 
-The following simplified EBNF describes the syntax of version 0.1. Lexical details and type constraints are defined in the preceding sections.
+The following simplified EBNF describes the syntax of version 0.2. Lexical details and type constraints are defined in the preceding sections.
 
 ```ebnf
 program          = { function-declaration } , EOF ;
@@ -407,7 +531,8 @@ function-declaration
                    [ "->" , type ] , block ;
 parameter-list   = parameter , { "," , parameter } ;
 parameter        = identifier , ":" , type ;
-type             = "bool" | "i32" | "i64" | "f32" | "f64" | "string" ;
+type             = [ "[]" ] , primitive-type ;
+primitive-type   = "bool" | "i32" | "i64" | "f32" | "f64" | "string" ;
 
 block            = "{" , { statement } , "}" ;
 statement        = let-statement
@@ -422,8 +547,10 @@ statement        = let-statement
 
 let-statement    = "let" , identifier , [ ":" , type ] , "=" , expression , ";" ;
 assignment-statement
-                 = identifier , ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) ,
+                 = assignment-target , ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) ,
                    expression , ";" ;
+assignment-target
+                 = identifier , [ "[" , expression , "]" ] ;
 expression-statement
                  = call-expression , ";" ;
 return-statement = "return" , [ expression ] , ";" ;
@@ -431,7 +558,7 @@ if-statement     = "if" , expression , block ,
                    [ "else" , ( if-statement | block ) ] ;
 while-statement  = "while" , expression , block ;
 for-statement    = "for" , identifier , "in" , expression ,
-                   ( ".." | "..=" ) , expression , block ;
+                   [ ( ".." | "..=" ) , expression ] , block ;
 break-statement  = "break" , ";" ;
 continue-statement
                  = "continue" , ";" ;
@@ -443,33 +570,41 @@ equality         = comparison , { ( "==" | "!=" ) , comparison } ;
 comparison       = additive , { ( "<" | "<=" | ">" | ">=" ) , additive } ;
 additive         = multiplicative , { ( "+" | "-" ) , multiplicative } ;
 multiplicative   = unary , { ( "*" | "/" | "%" ) , unary } ;
-unary            = ( "-" | "!" ) , unary | primary ;
+unary            = ( "-" | "!" ) , unary | postfix ;
+postfix          = primary , { "[" , expression , "]" } ;
 primary          = literal
+                 | array-expression
                  | call-expression
                  | identifier
                  | "(" , expression , ")" ;
-call-expression  = ( identifier | type ) , "(" , [ argument-list ] , ")" ;
+array-expression = "[" , [ expression , { "," , expression } ] , "]"
+                 | "[" , expression , ";" , expression , "]" ;
+call-expression  = ( identifier | primitive-type ) , "(" , [ argument-list ] , ")" ;
 argument-list    = expression , { "," , expression } ;
 literal          = boolean-literal
                  | integer-literal
                  | float-literal
-                 | string-literal ;
+                 | string-literal
+                 | interpolated-string ;
 ```
 
-## 13. Features outside version 0.1
+An `interpolated-string` is lexically an `f` immediately followed by a string literal whose content alternates text segments with `${ expression }` holes (Section 4.6); each hole contains a complete `expression` from the grammar above.
 
-The following features are candidates for future versions and are not defined in version 0.1:
+## 13. Features outside version 0.2
+
+The following features are candidates for future versions and are not defined in version 0.2:
 
 - Global variables and constants
-- Arrays, tuples, structs, enumerations, and classes
-- User-defined types
+- Nested arrays, array equality and printing, growable arrays and slices
+- Tuples, structs, enumerations, classes, and other user-defined types
 - Function values, lambda expressions, and closures
 - Generics and user-defined overloads
 - Modules and `import`
 - `null` and nullable types
-- Character types and character literals
+- Character types and character literals; string length and indexing
 - Bitwise operators
 - Scientific notation and binary, octal, or hexadecimal integer literals
-- Floor division and a divisor-signed remainder (Python's `//` and `%`), whose non-negative remainder is the natural fit for cyclic indexing once arrays exist
+- Floor division and a divisor-signed remainder (Python's `//` and `%`), whose non-negative remainder is the natural fit for cyclic indexing
 - Descending ranges and custom range steps
-- Access to the raw command-line argument array (typed `main` parameters cover the common cases)
+- `$name` interpolation shorthand (the `$` is reserved inside interpolated strings)
+- Non-fatal parsing of strings (a `try`-style or optional-value form of the Section 7 string conversions)
