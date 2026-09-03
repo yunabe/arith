@@ -1,7 +1,5 @@
 using System.CommandLine;
 
-using Arith.Cli.Experiments;
-
 namespace Arith.Cli;
 
 internal static class Program
@@ -22,7 +20,6 @@ internal static class Program
         rootCommand.Subcommands.Add(versionCommand);
         rootCommand.Subcommands.Add(BuildBuildCommand());
         rootCommand.Subcommands.Add(BuildRunCommand());
-        rootCommand.Subcommands.Add(BuildExperimentCommand());
 
         return rootCommand;
     }
@@ -37,15 +34,22 @@ internal static class Program
         {
             Description = "Directory the program is written into (default: the current directory).",
         };
+        Option<bool> aotOption = new("--aot")
+        {
+            Description = "Compile ahead-of-time into a single native executable "
+                + "(requires the platform's native linker; no dotnet host needed to run it).",
+        };
         Command buildCommand = new("build")
         {
             Description = "Compile an Arith source file into a .NET assembly.",
         };
         buildCommand.Arguments.Add(sourceArgument);
         buildCommand.Options.Add(outputOption);
+        buildCommand.Options.Add(aotOption);
         buildCommand.SetAction(parseResult => CompilerCommands.Build(
             parseResult.GetRequiredValue(sourceArgument),
             parseResult.GetValue(outputOption),
+            parseResult.GetValue(aotOption),
             parseResult.InvocationConfiguration.Output,
             parseResult.InvocationConfiguration.Error));
         return buildCommand;
@@ -67,48 +71,5 @@ internal static class Program
             parseResult.InvocationConfiguration.Output,
             parseResult.InvocationConfiguration.Error));
         return runCommand;
-    }
-
-    private static Command BuildExperimentCommand()
-    {
-        Command experimentCommand = new("experiment")
-        {
-            Description = "Experimental commands used to prototype compiler stages.",
-        };
-
-        Argument<string> outputDirectoryArgument = new("output-directory")
-        {
-            Description = "Directory the fib program is written into (created if missing).",
-        };
-        Option<bool> aotOption = new("--aot")
-        {
-            Description = "Compile the program ahead-of-time into a single native executable "
-                + "(requires the platform's native linker; no dotnet host needed to run it).",
-        };
-        Command buildFibCommand = new("build-fib-command")
-        {
-            Description = "Emit a demo `fib` console program by generating .NET IL and metadata directly.",
-        };
-        buildFibCommand.Arguments.Add(outputDirectoryArgument);
-        buildFibCommand.Options.Add(aotOption);
-        buildFibCommand.SetAction(parseResult =>
-        {
-            string outputDirectory = parseResult.GetRequiredValue(outputDirectoryArgument);
-            TextWriter output = parseResult.InvocationConfiguration.Output;
-            if (parseResult.GetValue(aotOption))
-            {
-                string executable = FibCommandEmitter.EmitNativeExecutable(outputDirectory, output);
-                output.WriteLine($"wrote {executable}");
-                return;
-            }
-
-            foreach (string path in FibCommandEmitter.Emit(outputDirectory))
-            {
-                output.WriteLine($"wrote {path}");
-            }
-        });
-        experimentCommand.Subcommands.Add(buildFibCommand);
-
-        return experimentCommand;
     }
 }

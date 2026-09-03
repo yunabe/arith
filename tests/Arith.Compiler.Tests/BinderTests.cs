@@ -284,6 +284,17 @@ public sealed class BinderTests
     }
 
     [Fact]
+    public void InnerScope_CanShadowAnOuterLocalWithADifferentType()
+    {
+        // Spec §6: an inner scope may declare a name already used in an
+        // outer scope; the outer variable is intact afterwards.
+        Compilation compilation = CompileMain(
+            "let x = 1; if true { let x = \"s\"; print(x); } print(x + 1);");
+
+        Assert.Empty(compilation.Diagnostics);
+    }
+
+    [Fact]
     public void LoopVariable_CanBeShadowedInTheBody()
     {
         // The body block is an inner scope relative to the loop variable.

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Security;
 
-namespace Arith.Cli.Experiments;
+namespace Arith.Cli;
 
 /// <summary>
 /// Compiles an IL assembly into a native executable with the official NativeAOT
@@ -55,7 +55,17 @@ internal static class NativeAotPublisher
         }
         finally
         {
-            workDirectory.Delete(recursive: true);
+            // Best effort: cleanup failing must not override the publish
+            // result — the executable may already be in place, and a publish
+            // error is more useful than a cleanup error.
+            try
+            {
+                workDirectory.Delete(recursive: true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // The OS reclaims temp files eventually.
+            }
         }
     }
 

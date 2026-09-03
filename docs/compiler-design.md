@@ -328,9 +328,9 @@ keeping its SRM approach. Structure:
    and `ManagedPEBuilder`. The emitter's product is an **in-memory PE image**
    inside an `EmitResult` (section 4.6); it does not touch the file system.
    Writing `<name>.dll`, `runtimeconfig.json`, and the POSIX/Windows
-   launchers is the CLI artifact writer's job, and a future `--aot` mode
-   packages the same `EmitResult` bytes via `NativeAotPublisher` — so there
-   is exactly one IL-generation path.
+   launchers is the CLI artifact writer's job, and the `--aot` mode packages
+   the same `EmitResult` bytes via `NativeAotPublisher` — so there is exactly
+   one IL-generation path.
 
 ### 4.6 Compilation facade and CLI
 
@@ -352,10 +352,12 @@ on-disk artifacts, and every packaging mode consumes the same bytes:
   success write `<name>.dll`, `<name>.runtimeconfig.json`, and the launchers.
 - `arith run <file.arith>` — build into a temp/cache directory, then execute
   via the `dotnet` host (reusing `ProcessRunner`), forwarding the exit code.
-- A future `arith build --aot` hands the same `EmitResult` bytes to
-  `NativeAotPublisher`: AOT is packaging, not a second emission path.
-- `arith experiment build-fib-command` remains until the real pipeline covers
-  it, then can be retired.
+- `arith build <file.arith> --aot` hands the same `EmitResult` bytes to
+  `NativeAotPublisher`, which produces a single native executable: AOT is
+  packaging, not a second emission path.
+- `arith experiment build-fib-command` remained until the real pipeline
+  covered it, and was retired once `arith build --aot` took over its AOT mode
+  (docs/il-emission-notes.md stays as the guided tour of the techniques).
 
 ## 5. Testing strategy
 
