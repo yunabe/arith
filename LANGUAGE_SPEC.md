@@ -74,7 +74,7 @@ Arith has no `null` value. A `string` value is always non-null, and so is an arr
 
 ### 3.1 Array types
 
-For each primitive type `T`, `[]T` is the type of arrays of `T`, corresponding to the .NET array type `T[]`:
+For each type `T` — primitive or itself an array — `[]T` is the type of arrays of `T`, corresponding to the .NET array type `T[]`:
 
 ```arith
 fn sum(values: []i64) -> i64 {
@@ -87,7 +87,8 @@ fn sum(values: []i64) -> i64 {
 ```
 
 - An array has a fixed length, set when it is created (Section 4.5) and returned by `len` (Section 10.2). Its elements are mutable.
-- Arrays of arrays (`[][]T`) are not supported in version 0.2.
+- Array types compose: `[][]i64` is an array of `[]i64` values — a *jagged* array (.NET `long[][]`) whose element arrays are independent references that may have different lengths. Rectangular multi-dimensional arrays (.NET `T[,]`) are a separate feature and are not in version 0.2.
+- Array types are structural: `[]i64` written anywhere denotes the one same type.
 - An array type may be used anywhere a type is expected: variables, parameters, and return types.
 - Arrays are **reference values**: assigning an array to a variable or passing it to a function shares the one underlying array rather than copying it, so element writes through one name are visible through the others.
 - No operators apply to arrays themselves — not even `==`/`!=` — and `print` does not accept them; only indexing (Section 8.6), `len`, and `for` (Section 9.3) consume arrays. Comparing or printing arrays is a candidate for a future version.
@@ -182,8 +183,16 @@ Element-list form `[e1, e2, …, en]`:
 
 Repeat form `[value; count]`:
 
-- `value` is evaluated once and every element is initialized to that one result (for an array element type this would share the same reference, but nested arrays are not supported in version 0.2).
+- `value` is evaluated once and every element is initialized to that one result.
 - `count` must have type `i64` (an expected type for unsuffixed literals) and is evaluated once, after `value`. A negative `count` is a runtime error; zero is allowed.
+- Because arrays are reference values, a repeat whose element is an array shares **one** array across every slot: after `let grid = [[0; 3]; 2];`, `grid[0]` and `grid[1]` are the same array, and `grid[0][0] = 7;` is visible as `grid[1][0]`. To create independent rows, fill the outer array in a loop:
+
+```arith
+let grid = [[0; 3]; 2];
+for r in 0..len(grid) {
+    grid[r] = [0; 3];
+}
+```
 
 ### 4.6 Interpolated strings
 
@@ -391,7 +400,7 @@ The target of an assignment is a variable name or an element of an array-typed v
 counts[i] += 1;
 ```
 
-For an element target `name[index]`, the variable and the index are evaluated (in that order) before the right-hand side, and — as for every index expression — the index must be in range at the time of the write (Section 8.6).
+For an element target `name[i1][i2]…[in]`, the variable and the indexes are evaluated left to right before the right-hand side, and — as for every index expression — each index must be in range at the time of the access (Section 8.6).
 
 ### 8.5 Precedence
 
@@ -412,7 +421,7 @@ Assignment is not an expression.
 
 ### 8.6 Indexing
 
-`a[i]` reads element `i` of an array-typed expression `a` and has the array's element type. Indexes have type `i64` (an expected type for unsuffixed literals) and count from zero. An index that is negative or not less than `len(a)` is a runtime error, for reads and writes alike. Indexing applies to any array-typed expression, including a call result: `rows(3)[0]`.
+`a[i]` reads element `i` of an array-typed expression `a` and has the array's element type. Indexes have type `i64` (an expected type for unsuffixed literals) and count from zero. An index that is negative or not less than `len(a)` is a runtime error, for reads and writes alike. Indexing applies to any array-typed expression, including a call result or another index expression, so it chains: `rows(3)[0]`, `grid[i][j]`.
 
 ## 9. Control flow
 
@@ -531,7 +540,7 @@ function-declaration
                    [ "->" , type ] , block ;
 parameter-list   = parameter , { "," , parameter } ;
 parameter        = identifier , ":" , type ;
-type             = [ "[]" ] , primitive-type ;
+type             = { "[]" } , primitive-type ;
 primitive-type   = "bool" | "i32" | "i64" | "f32" | "f64" | "string" ;
 
 block            = "{" , { statement } , "}" ;
@@ -550,7 +559,7 @@ assignment-statement
                  = assignment-target , ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) ,
                    expression , ";" ;
 assignment-target
-                 = identifier , [ "[" , expression , "]" ] ;
+                 = identifier , { "[" , expression , "]" } ;
 expression-statement
                  = call-expression , ";" ;
 return-statement = "return" , [ expression ] , ";" ;
@@ -595,7 +604,7 @@ An `interpolated-string` is lexically an `f` immediately followed by a string li
 The following features are candidates for future versions and are not defined in version 0.2:
 
 - Global variables and constants
-- Nested arrays, array equality and printing, growable arrays and slices
+- Array equality and printing, growable arrays and slices, rectangular multi-dimensional arrays (`T[,]`)
 - Tuples, structs, enumerations, classes, and other user-defined types
 - Function values, lambda expressions, and closures
 - Generics and user-defined overloads
