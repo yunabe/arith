@@ -9,10 +9,13 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The compiler implements all of language v0.1 (architecture in
-> [docs/compiler-design.md](docs/compiler-design.md)): `arith build` and
-> `arith run` compile and execute every feature in
-> [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md).
+> The compiler implements all of language v0.1, released as
+> [v0.1.0](https://github.com/yunabe/arith/releases/tag/v0.1.0) (architecture
+> in [docs/compiler-design.md](docs/compiler-design.md)).
+> [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) on `main` now drafts language v0.2
+> (arrays, `main(args: []string)`, string conversions, `f"..."`
+> interpolation), which is not implemented yet; the v0.1 specification is
+> preserved at the `v0.1.0` tag.
 
 ## Example
 
