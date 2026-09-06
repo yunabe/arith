@@ -62,8 +62,8 @@ high!
 - Interpolated strings: `f"x = ${x}"`
 - Typed `main` parameters that receive parsed command-line arguments, or
   `main(args: []string)` receiving all of them verbatim
-- Explicit conversions between primitive types, `string(x)` and
-  `i64("42")` included
+- Explicit numeric conversions, and conversions between `string` and the
+  other primitives: `string(x)` and `i64("42")`
 - Checked integer arithmetic
 - Generation of a .NET assembly with `main` as its entry point
 
