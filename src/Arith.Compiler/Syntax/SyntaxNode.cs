@@ -32,7 +32,8 @@ public sealed record ParameterSyntax(
     TextSpan Span) : SyntaxNode(Span);
 
 /// <summary>
-/// A type name in source: one of the six type keywords. The keyword token is
+/// A type name in source: zero or more `[]` array prefixes (ArrayDepth,
+/// spec §3.1) over one of the six type keywords. The keyword token is
 /// missing when the parser expected a type and found something else.
 /// </summary>
-public sealed record TypeSyntax(Token Keyword, TextSpan Span) : SyntaxNode(Span);
+public sealed record TypeSyntax(Token Keyword, int ArrayDepth, TextSpan Span) : SyntaxNode(Span);

@@ -273,6 +273,8 @@ public sealed class Lexer
             (')', _) => (SyntaxKind.CloseParenToken, 1),
             ('{', _) => (SyntaxKind.OpenBraceToken, 1),
             ('}', _) => (SyntaxKind.CloseBraceToken, 1),
+            ('[', _) => (SyntaxKind.OpenBracketToken, 1),
+            (']', _) => (SyntaxKind.CloseBracketToken, 1),
             (',', _) => (SyntaxKind.CommaToken, 1),
             (':', _) => (SyntaxKind.ColonToken, 1),
             (';', _) => (SyntaxKind.SemicolonToken, 1),

@@ -34,14 +34,15 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | --- | --- | --- |
 | ARITH2001 | `unexpected {0}, expected {1}` | The parser needed a specific token or construct and found something else |
 | ARITH2002 | `only a call expression can be used as a statement` | An expression other than a call appears as a statement (`1 + 2;`) |
-| ARITH2003 | `trailing comma is not allowed` | A parameter or argument list ends with `,` |
+| ARITH2003 | `trailing comma is not allowed` | A parameter list, argument list, or array literal ends with `,` |
+| ARITH2004 | `the target of an assignment must be a variable or an array element` | The left side of `=` (or a compound operator) is not a name or an index expression (`f() = 1;`, `1 + 2 = 3;`) |
 
 ## Semantic errors (ARITH3xxx)
 
 | Code | Message | Reported when |
 | --- | --- | --- |
 | ARITH3001 | `function '{0}' is already declared` | Two functions share a name |
-| ARITH3002 | `'print' is a built-in function and cannot be redeclared` | A function named `print` is declared |
+| ARITH3002 | `'{0}' is a built-in function and cannot be redeclared` | A function named `print` or `len` is declared |
 | ARITH3003 | `program must contain a 'main' function` | No `main` is declared |
 | ARITH3004 | `'main' must return no value or i32` | `main` declares any other return type |
 | ARITH3005 | `'{0}' is not defined` | A variable name is used before or without a declaration in scope |
@@ -59,7 +60,12 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH3017 | `expression does not produce a value` | A call to a function with no return type is used where a value is required |
 | ARITH3018 | `loop variable '{0}' cannot be reassigned` | A range-`for` variable is the target of an assignment |
 | ARITH3019 | `'{0}' can only be used inside a loop` | `break` or `continue` outside `while`/`for` |
-| ARITH3020 | `cannot convert from '{0}' to '{1}'` | An explicit conversion pair is unsupported (`bool` either way, or from `string`) |
+| ARITH3020 | `cannot convert from '{0}' to '{1}'` | An explicit conversion pair is unsupported (`bool` either way, or an array operand) |
+| ARITH3021 | `an empty array literal requires an expected array type` | `[]` appears without an expected array type to supply its element type |
+| ARITH3022 | `a value of type '{0}' cannot be indexed` | `x[i]` where `x` is not an array |
+| ARITH3023 | `'len' requires an array argument but was given '{0}'` | `len` is applied to a non-array value |
+| ARITH3024 | `'print' does not accept a value of type '{0}'` | `print` is given an array — arrays have no defined text form |
+| ARITH3025 | `'main' cannot declare a parameter of type '{0}'` | `main` declares an array-typed parameter |
 
 The registry itself is [`ErrorCodes.cs`](../src/Arith.Compiler/Diagnostics/ErrorCodes.cs);
 a test keeps this table and the registry in sync.

@@ -35,6 +35,19 @@ public sealed record BoundAssignmentStatement(
     BoundBinaryOperatorKind? CompoundOperator,
     BoundExpression Value) : BoundStatement;
 
+/// <summary>
+/// `array[index] = value;` or a compound form (spec §8.4). Array and Index
+/// are evaluated once, before Value; CompoundOperator is null for plain
+/// assignment, otherwise the operation applied between the element's current
+/// value and Value.
+/// </summary>
+public sealed record BoundElementAssignmentStatement(
+    BoundExpression Array,
+    BoundExpression Index,
+    ArithType ElementType,
+    BoundBinaryOperatorKind? CompoundOperator,
+    BoundExpression Value) : BoundStatement;
+
 public sealed record BoundExpressionStatement(BoundExpression Expression) : BoundStatement;
 
 public sealed record BoundReturnStatement(BoundExpression? Value) : BoundStatement;
@@ -115,6 +128,30 @@ public sealed record BoundCallExpression(
 public sealed record BoundConversionExpression(
     ArithType Type,
     BoundExpression Operand) : BoundExpression(Type);
+
+/// <summary>`[e1, e2, …]` (spec §4.5). Type is the array type; Elements match its element type.</summary>
+public sealed record BoundArrayLiteralExpression(
+    ArithType Type,
+    ImmutableArray<BoundExpression> Elements) : BoundExpression(Type);
+
+/// <summary>
+/// `[value; count]` (spec §4.5). Value is evaluated once and shared by every
+/// slot — significant when the element is itself an array reference — and
+/// Count (i64) is evaluated after it; a negative count faults at runtime.
+/// </summary>
+public sealed record BoundArrayRepeatExpression(
+    ArithType Type,
+    BoundExpression Value,
+    BoundExpression Count) : BoundExpression(Type);
+
+/// <summary>An element read `array[index]` (spec §8.6). Type is the array's element type; Index is i64.</summary>
+public sealed record BoundIndexExpression(
+    BoundExpression Array,
+    BoundExpression Index,
+    ArithType Type) : BoundExpression(Type);
+
+/// <summary>The built-in `len(array)` (spec §10.2), an i64-valued expression.</summary>
+public sealed record BoundLenExpression(BoundExpression Array) : BoundExpression(ArithType.I64);
 
 /// <summary>Placeholder for an expression that could not be bound; its Error type suppresses cascades.</summary>
 public sealed record BoundErrorExpression() : BoundExpression(ArithType.Error);

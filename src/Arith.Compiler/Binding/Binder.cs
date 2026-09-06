@@ -43,9 +43,9 @@ public sealed class Binder
                 continue;
             }
 
-            if (symbol.Name == "print")
+            if (symbol.Name is "print" or "len")
             {
-                _diagnostics.Report(ErrorCodes.PrintRedeclared, syntax.Identifier.Span);
+                _diagnostics.Report(ErrorCodes.BuiltinRedeclared, syntax.Identifier.Span, symbol.Name);
             }
             else if (!_functions.TryAdd(symbol.Name, symbol))
             {
@@ -85,16 +85,32 @@ public sealed class Binder
         return new FunctionSymbol(syntax.Identifier.Text, parameters.MoveToImmutable(), returnType);
     }
 
-    private static ArithType BindType(TypeSyntax syntax) => syntax.Keyword.Kind switch
+    private static ArithType BindType(TypeSyntax syntax)
     {
-        SyntaxKind.BoolKeyword => ArithType.Bool,
-        SyntaxKind.I32Keyword => ArithType.I32,
-        SyntaxKind.I64Keyword => ArithType.I64,
-        SyntaxKind.F32Keyword => ArithType.F32,
-        SyntaxKind.F64Keyword => ArithType.F64,
-        SyntaxKind.StringKeyword => ArithType.String,
-        _ => ArithType.Error, // The parser already reported the missing type.
-    };
+        ArithType type = syntax.Keyword.Kind switch
+        {
+            SyntaxKind.BoolKeyword => ArithType.Bool,
+            SyntaxKind.I32Keyword => ArithType.I32,
+            SyntaxKind.I64Keyword => ArithType.I64,
+            SyntaxKind.F32Keyword => ArithType.F32,
+            SyntaxKind.F64Keyword => ArithType.F64,
+            SyntaxKind.StringKeyword => ArithType.String,
+            _ => ArithType.Error, // The parser already reported the missing type.
+        };
+        if (type.IsError)
+        {
+            return type; // `[]<garbage>` stays plain Error to suppress cascades.
+        }
+
+        // Each `[]` prefix wraps once more: `[][]i64` is array-of-[]i64
+        // (spec §3.1).
+        for (int i = 0; i < syntax.ArrayDepth; i++)
+        {
+            type = type.ArrayOf();
+        }
+
+        return type;
+    }
 
     private void ValidateEntryPoint(List<(FunctionDeclarationSyntax Syntax, FunctionSymbol Symbol)> declarations)
     {
@@ -107,13 +123,27 @@ public sealed class Binder
         // Spec §5.1: main returns i32 or nothing; parameters of any
         // primitive type are allowed and receive parsed command-line
         // arguments. An Error return type was already reported by the parser.
+        FunctionDeclarationSyntax syntax = declarations.First(d => ReferenceEquals(d.Symbol, main)).Syntax;
         bool validReturn = main.ReturnType == ArithType.Void
             || main.ReturnType == ArithType.I32
             || main.ReturnType.IsError;
         if (!validReturn)
         {
-            FunctionDeclarationSyntax syntax = declarations.First(d => ReferenceEquals(d.Symbol, main)).Syntax;
             _diagnostics.Report(ErrorCodes.InvalidEntryPointSignature, syntax.Identifier.Span);
+        }
+
+        // The entry-point bridge parses one command-line argument per
+        // parameter, which only works for primitives; array parameters have
+        // no argument form (the `main(args: []string)` variant is a future
+        // feature).
+        for (int i = 0; i < main.Parameters.Length; i++)
+        {
+            ArithType parameterType = main.Parameters[i].Type;
+            if (parameterType.IsArray)
+            {
+                _diagnostics.Report(
+                    ErrorCodes.InvalidEntryPointParameter, syntax.Parameters[i].Span, parameterType);
+            }
         }
     }
 
@@ -295,22 +325,6 @@ public sealed class Binder
 
     private BoundStatement BindAssignmentStatement(AssignmentStatementSyntax syntax)
     {
-        VariableSymbol? variable = LookupVariable(syntax.Identifier);
-        if (variable is null)
-        {
-            ResolveToDefault(BindExpression(syntax.Value, expected: null));
-            return new BoundErrorStatement();
-        }
-
-        if (variable is LocalSymbol { IsReadOnly: true })
-        {
-            // Spec §9.3: the range-for loop variable cannot be reassigned.
-            _diagnostics.Report(ErrorCodes.LoopVariableReassigned, syntax.Identifier.Span, variable.Name);
-            BindExpressionWithType(syntax.Value, variable.Type);
-            return new BoundErrorStatement();
-        }
-
-        BoundExpression value = BindExpressionWithType(syntax.Value, variable.Type);
         BoundBinaryOperatorKind? compound = syntax.OperatorToken.Kind switch
         {
             SyntaxKind.EqualsToken => null,
@@ -321,6 +335,43 @@ public sealed class Binder
             SyntaxKind.PercentEqualsToken => BoundBinaryOperatorKind.Remainder,
             _ => throw new UnreachableException($"unhandled assignment operator {syntax.OperatorToken.Kind}"),
         };
+
+        // The parser guarantees a name, an index chain, or an already
+        // diagnosed error target (spec §8.4).
+        switch (syntax.Target)
+        {
+            case NameExpressionSyntax name:
+                return BindVariableAssignment(name, compound, syntax);
+            case IndexExpressionSyntax index:
+                return BindElementAssignment(index, compound, syntax);
+            case ErrorExpressionSyntax:
+                ResolveToDefault(BindExpression(syntax.Value, expected: null));
+                return new BoundErrorStatement();
+            default:
+                throw new UnreachableException(
+                    $"unhandled assignment target {syntax.Target.GetType().Name}");
+        }
+    }
+
+    private BoundStatement BindVariableAssignment(
+        NameExpressionSyntax name, BoundBinaryOperatorKind? compound, AssignmentStatementSyntax syntax)
+    {
+        VariableSymbol? variable = LookupVariable(name.Identifier);
+        if (variable is null)
+        {
+            ResolveToDefault(BindExpression(syntax.Value, expected: null));
+            return new BoundErrorStatement();
+        }
+
+        if (variable is LocalSymbol { IsReadOnly: true })
+        {
+            // Spec §9.3: the range-for loop variable cannot be reassigned.
+            _diagnostics.Report(ErrorCodes.LoopVariableReassigned, name.Identifier.Span, variable.Name);
+            BindExpressionWithType(syntax.Value, variable.Type);
+            return new BoundErrorStatement();
+        }
+
+        BoundExpression value = BindExpressionWithType(syntax.Value, variable.Type);
         if (compound is { } kind && !variable.Type.IsError
             && !IsArithmeticOperandType(kind, variable.Type))
         {
@@ -331,6 +382,37 @@ public sealed class Binder
         }
 
         return new BoundAssignmentStatement(variable, compound, value);
+    }
+
+    private BoundStatement BindElementAssignment(
+        IndexExpressionSyntax target, BoundBinaryOperatorKind? compound, AssignmentStatementSyntax syntax)
+    {
+        // Spec §8.4: the array and the index are evaluated (and type-checked)
+        // before the right-hand side.
+        BoundExpression array = BindIndexTarget(target.Target);
+        BoundExpression index = BindExpressionWithType(target.Index, ArithType.I64);
+        if (array.Type.IsError)
+        {
+            ResolveToDefault(BindExpression(syntax.Value, expected: null));
+            return new BoundErrorStatement();
+        }
+
+        ArithType elementType = array.Type.ElementType!;
+        BoundExpression value = BindExpressionWithType(syntax.Value, elementType);
+        if (compound is { } kind && !IsArithmeticOperandType(kind, elementType))
+        {
+            _diagnostics.Report(
+                ErrorCodes.InvalidBinaryOperator, syntax.OperatorToken.Span,
+                syntax.OperatorToken.Text, elementType, elementType);
+            return new BoundErrorStatement();
+        }
+
+        if (index.Type.IsError || value.Type.IsError)
+        {
+            return new BoundErrorStatement();
+        }
+
+        return new BoundElementAssignmentStatement(array, index, elementType, compound, value);
     }
 
     private BoundStatement BindExpressionStatement(ExpressionStatementSyntax syntax)
@@ -366,6 +448,14 @@ public sealed class Binder
         if (bound.Type == ArithType.Void)
         {
             _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Arguments[0].Span);
+            return new BoundErrorStatement();
+        }
+
+        // Spec §3.1: print accepts only primitive values — there is no
+        // defined text form for an array.
+        if (!bound.Type.IsError && !bound.Type.IsPrimitive)
+        {
+            _diagnostics.Report(ErrorCodes.PrintRequiresPrimitive, syntax.Arguments[0].Span, bound.Type);
             return new BoundErrorStatement();
         }
 
@@ -454,6 +544,12 @@ public sealed class Binder
                 return BindBinaryExpression(binary, expected);
             case CallExpressionSyntax call:
                 return BindCallExpression(call);
+            case ArrayLiteralExpressionSyntax array:
+                return BindArrayLiteral(array, expected);
+            case ArrayRepeatExpressionSyntax repeat:
+                return BindArrayRepeat(repeat, expected);
+            case IndexExpressionSyntax index:
+                return BindIndexExpression(index);
             case ErrorExpressionSyntax:
                 return new BoundErrorExpression(); // Already diagnosed by the parser.
             default:
@@ -661,6 +757,13 @@ public sealed class Binder
             return new BoundErrorExpression();
         }
 
+        if (syntax.Callee.Text == "len")
+        {
+            // `len` is the expression-valued built-in (spec §10.2),
+            // intercepted like `print` before ordinary call binding.
+            return BindLenExpression(syntax);
+        }
+
         if (syntax.Callee.Text == "print")
         {
             // Statement-position print was intercepted; here its (absent)
@@ -695,6 +798,155 @@ public sealed class Binder
         }
 
         return new BoundCallExpression(function, arguments.MoveToImmutable());
+    }
+
+    private BoundExpression BindLenExpression(CallExpressionSyntax syntax)
+    {
+        if (syntax.Arguments.Length != 1)
+        {
+            BindArgumentsForDiagnostics(syntax);
+            _diagnostics.Report(ErrorCodes.WrongArgumentCount, syntax.Span, "len", 1, syntax.Arguments.Length);
+            return new BoundErrorExpression();
+        }
+
+        BoundExpression argument = ResolveToDefault(BindExpression(syntax.Arguments[0], expected: null));
+        if (argument.Type.IsError)
+        {
+            return new BoundErrorExpression();
+        }
+
+        if (argument.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Arguments[0].Span);
+            return new BoundErrorExpression();
+        }
+
+        if (!argument.Type.IsArray)
+        {
+            // Spec §10.2: len applies to arrays only — string length is a
+            // deliberate non-feature for now.
+            _diagnostics.Report(ErrorCodes.LenRequiresArray, syntax.Arguments[0].Span, argument.Type);
+            return new BoundErrorExpression();
+        }
+
+        return new BoundLenExpression(argument);
+    }
+
+    private BoundExpression BindArrayLiteral(ArrayLiteralExpressionSyntax syntax, ArithType? expected)
+    {
+        // Spec §4.5: an expected array type propagates its element type into
+        // every element (recursively, through nested literals).
+        if (expected is { IsArray: true })
+        {
+            ArithType elementType = expected.ElementType!;
+            ImmutableArray<BoundExpression>.Builder typed =
+                ImmutableArray.CreateBuilder<BoundExpression>(syntax.Elements.Length);
+            foreach (ExpressionSyntax element in syntax.Elements)
+            {
+                typed.Add(BindExpressionWithType(element, elementType));
+            }
+
+            return new BoundArrayLiteralExpression(expected, typed.MoveToImmutable());
+        }
+
+        // Without one, every element is typed on its own and must equal the
+        // first element's type exactly — `[1i32, 2]` is an error, because the
+        // unsuffixed 2 defaults to i64 (spec §4.5).
+        if (syntax.Elements.IsEmpty)
+        {
+            _diagnostics.Report(ErrorCodes.EmptyArrayLiteralNeedsType, syntax.Span);
+            return new BoundErrorExpression();
+        }
+
+        ImmutableArray<BoundExpression>.Builder elements =
+            ImmutableArray.CreateBuilder<BoundExpression>(syntax.Elements.Length);
+        ArithType? elementTypeSoFar = null;
+        foreach (ExpressionSyntax elementSyntax in syntax.Elements)
+        {
+            BoundExpression element = ResolveToDefault(BindExpression(elementSyntax, expected: null));
+            if (element.Type == ArithType.Void)
+            {
+                _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, elementSyntax.Span);
+                element = new BoundErrorExpression();
+            }
+            else if (elementTypeSoFar is not null && !element.Type.IsError
+                && element.Type != elementTypeSoFar)
+            {
+                _diagnostics.Report(
+                    ErrorCodes.TypeMismatch, elementSyntax.Span, elementTypeSoFar, element.Type);
+                element = new BoundErrorExpression();
+            }
+
+            elementTypeSoFar ??= element.Type.IsError ? null : element.Type;
+            elements.Add(element);
+        }
+
+        // Without a usable first element the literal has no element type.
+        return elementTypeSoFar is null
+            ? new BoundErrorExpression()
+            : new BoundArrayLiteralExpression(elementTypeSoFar.ArrayOf(), elements.MoveToImmutable());
+    }
+
+    private BoundExpression BindArrayRepeat(ArrayRepeatExpressionSyntax syntax, ArithType? expected)
+    {
+        // Spec §4.5: the value takes the expected element type when there is
+        // one and is typed on its own otherwise; the count is always i64.
+        BoundExpression value;
+        ArithType? arrayType;
+        if (expected is { IsArray: true })
+        {
+            value = BindExpressionWithType(syntax.Value, expected.ElementType!);
+            arrayType = expected;
+        }
+        else
+        {
+            value = ResolveToDefault(BindExpression(syntax.Value, expected: null));
+            if (value.Type == ArithType.Void)
+            {
+                _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Value.Span);
+                value = new BoundErrorExpression();
+            }
+
+            arrayType = value.Type.IsError ? null : value.Type.ArrayOf();
+        }
+
+        BoundExpression count = BindExpressionWithType(syntax.Count, ArithType.I64);
+        return arrayType is null || count.Type.IsError
+            ? new BoundErrorExpression()
+            : new BoundArrayRepeatExpression(arrayType, value, count);
+    }
+
+    private BoundExpression BindIndexExpression(IndexExpressionSyntax syntax)
+    {
+        BoundExpression array = BindIndexTarget(syntax.Target);
+        BoundExpression index = BindExpressionWithType(syntax.Index, ArithType.I64);
+        return array.Type.IsError || index.Type.IsError
+            ? new BoundErrorExpression()
+            : new BoundIndexExpression(array, index, array.Type.ElementType!);
+    }
+
+    /// <summary>Binds the target of an index operation, which must be array-typed (spec §8.6).</summary>
+    private BoundExpression BindIndexTarget(ExpressionSyntax syntax)
+    {
+        BoundExpression bound = ResolveToDefault(BindExpression(syntax, expected: null));
+        if (bound.Type.IsError)
+        {
+            return bound;
+        }
+
+        if (bound.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Span);
+            return new BoundErrorExpression();
+        }
+
+        if (!bound.Type.IsArray)
+        {
+            _diagnostics.Report(ErrorCodes.NotIndexable, syntax.Span, bound.Type);
+            return new BoundErrorExpression();
+        }
+
+        return bound;
     }
 
     /// <summary>
@@ -738,8 +990,11 @@ public sealed class Binder
             return new BoundErrorExpression();
         }
 
+        // The operand must be a primitive value: conversions are defined
+        // between primitives only (spec §7), so an array converts to nothing
+        // — not even to string.
         bool valid = (target.IsNumeric && operand.Type.IsNumeric)
-            || target == ArithType.String
+            || (target == ArithType.String && operand.Type.IsPrimitive)
             || operand.Type == ArithType.String;
         if (!valid)
         {

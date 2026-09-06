@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Arith.Compiler.Binding;
 
 /// <summary>
@@ -28,16 +30,26 @@ public sealed class ArithType
     public static readonly ArithType PendingInt = new("{integer}", isInteger: true, isPending: true);
     public static readonly ArithType PendingFloat = new("{float}", isFloat: true, isPending: true);
 
-    private ArithType(string name, bool isInteger = false, bool isFloat = false, bool isError = false, bool isPending = false)
+    private ArithType? _arrayType;
+
+    private ArithType(
+        string name, bool isInteger = false, bool isFloat = false, bool isError = false,
+        bool isPending = false, ArithType? elementType = null)
     {
         Name = name;
         IsInteger = isInteger;
         IsFloat = isFloat;
         IsError = isError;
         IsPending = isPending;
+        ElementType = elementType;
     }
 
     public string Name { get; }
+
+    /// <summary>The element type when this is an array type; null otherwise.</summary>
+    public ArithType? ElementType { get; }
+
+    public bool IsArray => ElementType is not null;
 
     public bool IsInteger { get; }
 
@@ -48,6 +60,29 @@ public sealed class ArithType
     public bool IsPending { get; }
 
     public bool IsNumeric => IsInteger || IsFloat;
+
+    /// <summary>True for the six spec §3 primitive value types.</summary>
+    public bool IsPrimitive => !IsArray && !IsError && !IsPending && this != Void;
+
+    /// <summary>
+    /// The interned array type `[]this` (spec §3.1). Array types are
+    /// structural, and interning keeps type equality a reference
+    /// comparison: every request for `[]i64` returns the same instance.
+    /// The exchange makes the cache safe under parallel test runs, since
+    /// the primitive singletons are shared process-wide.
+    /// </summary>
+    public ArithType ArrayOf()
+    {
+        Debug.Assert(!IsError && !IsPending && this != Void, "no arrays of non-value types");
+        ArithType? existing = Volatile.Read(ref _arrayType);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        ArithType created = new("[]" + Name, elementType: this);
+        return Interlocked.CompareExchange(ref _arrayType, created, null) ?? created;
+    }
 
     /// <summary>The category default an unforced pending type resolves to (spec §4.2/§4.3).</summary>
     public ArithType DefaultForPending => IsInteger ? I64 : F64;

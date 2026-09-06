@@ -148,6 +148,104 @@ public sealed class EmitterTests
     }
 
     [Fact]
+    public void BoolArrayElements_LoadUnsignedAndStoreAsBytes()
+    {
+        // Design §7: a bool element stores as a byte (stelem.i1) and loads
+        // zero-extended (ldelem.u1) so every read is a valid 0/1 bool —
+        // observable output cannot distinguish the signed load.
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main() {
+                let flags = [true, false];
+                flags[1] = true;
+                print(flags[0]);
+            }
+            """);
+        using (pe)
+        {
+            byte[] il = MethodBodyIl(pe, metadata, "main");
+            Assert.Contains((byte)0x91, il); // ldelem.u1
+            Assert.Contains((byte)0x9C, il); // stelem.i1
+            Assert.DoesNotContain((byte)0x90, il); // ldelem.i1 (sign-extending).
+        }
+    }
+
+    [Fact]
+    public void IndexAndRepeatCount_NarrowWithCheckedNativeConversions()
+    {
+        // Design §7 width discipline: i64 indexes narrow with conv.ovf.i so
+        // a 32-bit host faults instead of wrapping, and the repeat count
+        // goes through conv.ovf.u so a negative count faults before newarr.
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main() {
+                let values = [0; 4];
+                print(values[3]);
+            }
+            """);
+        using (pe)
+        {
+            byte[] il = MethodBodyIl(pe, metadata, "main");
+            Assert.Contains((byte)0xD4, il); // conv.ovf.i before ldelem.
+            Assert.Contains((byte)0xD5, il); // conv.ovf.u before newarr.
+        }
+    }
+
+    [Fact]
+    public void Len_WidensTheNativeLengthUnsigned()
+    {
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main() {
+                print(len([1, 2, 3]));
+            }
+            """);
+        using (pe)
+        {
+            byte[] il = MethodBodyIl(pe, metadata, "main");
+            Assert.True(ContainsSequence(il, [0x8E, 0x6E]), "len is not ldlen followed by conv.u8");
+        }
+    }
+
+    [Fact]
+    public void NestedArrayCreation_NamesItsElementTypeViaTypeSpec()
+    {
+        // newarr for a [][]i64 needs `[]i64` as its element-type token, and
+        // only a TypeSpec row can name a constructed type (design §7).
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main() {
+                let grid = [[1], [2, 3]];
+                print(grid[1][0]);
+            }
+            """);
+        using (pe)
+        {
+            Assert.True(
+                metadata.GetTableRowCount(TableIndex.TypeSpec) > 0,
+                "no TypeSpec row for the nested array element type");
+        }
+    }
+
+    [Fact]
+    public void FlatArrayProgram_EmitsNoTypeSpecRows()
+    {
+        // A primitive element type is a plain TypeRef; the TypeSpec table
+        // stays empty unless arrays nest.
+        (PEReader pe, MetadataReader metadata) = EmitProgram(
+            """
+            fn main() {
+                let values = [1, 2, 3];
+                print(values[0]);
+            }
+            """);
+        using (pe)
+        {
+            Assert.Equal(0, metadata.GetTableRowCount(TableIndex.TypeSpec));
+        }
+    }
+
+    [Fact]
     public void CheckedIntegerArithmetic_UsesOvfOpcodes()
     {
         (PEReader pe, MetadataReader metadata) = EmitProgram(

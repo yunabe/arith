@@ -39,6 +39,23 @@ public sealed record BinaryExpressionSyntax(
     ExpressionSyntax Right,
     TextSpan Span) : ExpressionSyntax(Span);
 
+/// <summary><c>[e1, e2, …]</c> — an element-list array creation (spec §4.5); Elements may be empty.</summary>
+public sealed record ArrayLiteralExpressionSyntax(
+    ImmutableArray<ExpressionSyntax> Elements,
+    TextSpan Span) : ExpressionSyntax(Span);
+
+/// <summary><c>[value; count]</c> — a repeat-form array creation (spec §4.5).</summary>
+public sealed record ArrayRepeatExpressionSyntax(
+    ExpressionSyntax Value,
+    ExpressionSyntax Count,
+    TextSpan Span) : ExpressionSyntax(Span);
+
+/// <summary><c>target[index]</c> — an element read (spec §8.6); chains left-associatively.</summary>
+public sealed record IndexExpressionSyntax(
+    ExpressionSyntax Target,
+    ExpressionSyntax Index,
+    TextSpan Span) : ExpressionSyntax(Span);
+
 /// <summary><c>(expression)</c>. Kept as a node so tests can assert grouping.</summary>
 public sealed record ParenthesizedExpressionSyntax(
     ExpressionSyntax Expression,

@@ -661,4 +661,85 @@ public sealed class ParserRecoveryScenarioTests
         Assert.Equal(expectedCodes, codes);
         Assert.Equal("(fn t (block (let x 1))) (fn u (block))", dump);
     }
+
+    // ---- Array syntax (v0.2) --------------------------------------------
+
+    // Contrast cases that already behave well: an unclosed array literal
+    // costs one diagnostic per missing token and keeps the elements — and
+    // when the next line is a fresh statement, that statement survives too.
+    [Fact]
+    public void UnclosedArrayLiteral_KeepsElementsAndTheNextStatement()
+    {
+        (string[] codes, string dump) = ParseScenario(
+            "fn t() { let a = [1, 2\nlet b = 3; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"]; // Missing ']' and ';'.
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let a (array 1 2)) (let b 3)))", dump);
+    }
+
+    // Another good one: the fabricated ']' lets the assignment through, so
+    // the single diagnostic points precisely at the missing bracket.
+    [Fact]
+    public void UnclosedIndexInAssignmentTarget_RecoversWithOneDiagnostic()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { a[1 = 2; }");
+
+        string[] expectedCodes = ["ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (= (index a 1) 2)))", dump);
+    }
+
+    // IDEAL: one diagnostic ("expected ',' or ']' between array elements"),
+    // with both elements kept in one literal.
+    // TODAY: the literal closes after the first element at the unexpected
+    // `2`, which then restarts as its own (non-call) expression statement,
+    // costing five diagnostics for one missing comma.
+    [Fact]
+    public void MissingCommaBetweenArrayElements_SplitsTheLiteral()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let a = [1 2]; }");
+
+        string[] expectedCodes =
+            ["ARITH2001", "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (let a (array 1)) (expr 2) (error-stmt)))", dump);
+    }
+
+    // IDEAL: one diagnostic ("expected an expression before ';'"), binding
+    // as an empty-or-error literal rather than a repeat form.
+    // TODAY: the leading `;` makes the parser commit to the repeat form
+    // with error placeholders for both the value and the count, reporting
+    // two diagnostics.
+    [Fact]
+    public void ArrayLiteralStartingWithSemicolon_BecomesAnErrorRepeatForm()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let a: []i64 = [;]; }");
+
+        string[] expectedCodes = ["ARITH2001", "ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (let a : []i64 (array-repeat (error) (error)))))", dump);
+    }
+
+    // IDEAL: one diagnostic ("expected ']' in array type") and the rest of
+    // the let parsed against an `[]i64` annotation.
+    // TODAY: `[i64` is not a type (the `[]` pair never closes), so the
+    // annotation goes missing and the initializer is misread as a repeat
+    // form spanning the whole tail — nine diagnostics for one missing ']'.
+    [Fact]
+    public void UnclosedArrayTypeBracket_CascadesThroughTheStatement()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { let a: [i64 = []; }");
+
+        string[] expectedCodes =
+        [
+            "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001",
+            "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001",
+        ];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal(
+            "(fn t (block (let a :  (array-repeat (call i64 (index (error) (error))) (error)))))",
+            dump);
+    }
 }
