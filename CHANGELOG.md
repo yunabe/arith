@@ -15,8 +15,9 @@ All notable changes to Arith are recorded here. The format follows
 - The compiler implements the v0.2 string-to-primitive conversions
   (`i64(s)`, `bool(s)`, …); parse failures, non-finite floats included, are
   runtime errors.
-- The compiler implements the v0.2 array core: array types and literals,
-  indexing and element assignment, reference semantics, and `len`.
+- The compiler implements v0.2 arrays: array types and literals, indexing
+  and element assignment, reference semantics, `len`, and array iteration.
+- `main(args: []string)` receives all command-line arguments verbatim.
 
 ## [0.1.0] - 2026-09-03
 

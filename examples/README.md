@@ -23,8 +23,8 @@ compile and produce the outputs shown here.
 | `pow.arith` | `pow.arith 3 13` → `3^13 = 1594323` | Exponentiation by squaring via `/ 2` and `% 2` (no bitwise ops needed) |
 | `pi.arith` | `pi.arith 1000` → `pi ~= 3.141592653340544 …` | Nilakantha series; invariant float output |
 | `mandelbrot.arith` | `mandelbrot.arith` | ASCII Mandelbrot: nested loops, `f64`, building rows by string concatenation |
-| `sort.arith` | `sort.arith` | In-place insertion sort; array parameters share their storage |
-| `life.arith` | `life.arith` | Conway's Game of Life; jagged `[][]bool` arrays and fresh row allocation |
+| `sort.arith` | `sort.arith` | In-place insertion sort; array parameters share storage, and `for` visits values directly |
+| `life.arith` | `life.arith` | Conway's Game of Life; jagged `[][]bool` arrays and nested array iteration |
 
 ## The tail-call experiment (`tailsum.arith`)
 

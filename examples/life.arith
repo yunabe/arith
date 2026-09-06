@@ -41,10 +41,10 @@ fn next_generation(grid: [][]bool) -> [][]bool {
 }
 
 fn print_grid(grid: [][]bool) {
-    for y in 0..len(grid) {
+    for cells in grid {
         let row = "";
-        for x in 0..len(grid[y]) {
-            if grid[y][x] {
+        for alive in cells {
+            if alive {
                 row += "#";
             } else {
                 row += ".";
@@ -56,9 +56,9 @@ fn print_grid(grid: [][]bool) {
 
 fn population(grid: [][]bool) -> i64 {
     let count = 0;
-    for y in 0..len(grid) {
-        for x in 0..len(grid[y]) {
-            if grid[y][x] {
+    for row in grid {
+        for alive in row {
+            if alive {
                 count += 1;
             }
         }

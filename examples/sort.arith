@@ -14,11 +14,10 @@ fn insertion_sort(values: []i64) {
 
 fn format(values: []i64) -> string {
     let result = "[";
-    for i in 0..len(values) {
-        if i > 0 {
-            result += ", ";
-        }
-        result += string(values[i]);
+    let separator = "";
+    for value in values {
+        result += separator + string(value);
+        separator = ", ";
     }
     return result + "]";
 }
