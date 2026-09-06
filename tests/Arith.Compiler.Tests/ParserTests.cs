@@ -94,6 +94,10 @@ public sealed class ParserTests
     [InlineData("f\"${name + \"!\"}\"", "(call string (+ name \"!\"))")] // A quoted string inside a hole.
     [InlineData("f\"${f\"${x}\"}\"", "(call string (call string x))")]   // Nested interpolation.
     [InlineData("f\"${a[0]}\"", "(call string (index a 0))")]
+    // The hole's `}` is found by tokenizing, so a `}` inside a block
+    // comment, a string, or a nested interpolation cannot end it early.
+    [InlineData("f\"${1 /* } */ + 2}\"", "(call string (+ 1 2))")]
+    [InlineData("f\"${f\"${\"}\"}\"}\"", "(call string (call string \"}\"))")]
     public void ParseInterpolatedString_DesugarsToConcatenation(string expression, string expected)
     {
         Assert.Equal(expected, DumpExpression(expression));
@@ -271,6 +275,17 @@ public sealed class ParserTests
         Assert.Equal(
             expectedDump,
             SyntaxDumper.Dump(Assert.Single(Assert.Single(tree.Root.Functions).Body.Statements)));
+    }
+
+    [Fact]
+    public void Parse_BadTokenAtHoleEnd_ReportsOnlyTheLexerDiagnostic()
+    {
+        // Cascade suppression: the trailing `@` was already reported as
+        // ARITH1001; the end-of-hole check must not add an ARITH2001.
+        SyntaxTree tree = Parse("fn t() { let s = f\"${1 @}\"; }");
+
+        Diagnostic diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("ARITH1001", diagnostic.Code);
     }
 
     [Fact]

@@ -615,6 +615,7 @@ public sealed class BuildRunCommandTests : IDisposable
                 print(f"cost: \$${2.5} (${true})");
                 print(f"${label(1) + "!"}");
                 print(f"nested: ${f"[${x}]"}");
+                print(f"${1 /* } */ + 2}");
                 let names = ["a", "b"];
                 for i in 0..len(names) {
                     print(f"${i}: ${names[i]}");
@@ -634,6 +635,7 @@ public sealed class BuildRunCommandTests : IDisposable
             "cost: $2.5 (true)",
             "#1!",
             "nested: [6]",
+            "3",
             "0: a",
             "1: b",
         ];

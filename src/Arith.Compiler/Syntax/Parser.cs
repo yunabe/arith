@@ -630,6 +630,15 @@ public sealed class Parser
         ImmutableArray<Token> tokens = Lexer.LexRange(_text, span, _diagnostics);
         Parser parser = new(_text, tokens, _diagnostics);
         ExpressionSyntax expression = parser.ParseExpression();
+
+        // A trailing Bad token was already reported by the lexer; drop the
+        // run without a second diagnostic (cascade suppression), as
+        // MatchToken does.
+        while (parser.Current.Kind == SyntaxKind.BadToken)
+        {
+            parser.Consume();
+        }
+
         if (parser.Current.Kind != SyntaxKind.EndOfFileToken)
         {
             parser.ReportUnexpected("the end of the interpolation hole");

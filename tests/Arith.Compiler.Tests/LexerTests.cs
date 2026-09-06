@@ -190,6 +190,8 @@ public sealed class LexerTests
     [InlineData("\"a\\$\"", "ARITH1003", 2, 2)]   // \$ is only an escape inside f-strings.
     [InlineData("f\"abc", "ARITH1002", 0, 5)]
     [InlineData("f\"${x", "ARITH1002", 0, 5)]     // An unterminated hole is an unterminated literal.
+    [InlineData("f\"${x // c}\"", "ARITH1002", 0, 12)] // A line comment swallows the rest of the line.
+    [InlineData("f\"${1 /* }\"", "ARITH1002", 0, 11)] // ... as does an unterminated block comment.
     [InlineData("f\"a\\q\"", "ARITH1003", 3, 2)]
     [InlineData("10abc", "ARITH1005", 2, 3)]
     [InlineData("10f32", "ARITH1005", 2, 3)]

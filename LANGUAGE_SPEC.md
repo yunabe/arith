@@ -206,6 +206,7 @@ print(f"x = ${x}, y + z = ${y + z}");
 - `f"x = ${x}"` is exactly equivalent to `"x = " + string(x)`: the literal is the concatenation of its text segments and, for each hole, the `string(…)` conversion (Section 7) of the hole's expression, evaluated left to right.
 - A hole may contain any expression of any primitive type, including string expressions and further interpolated strings.
 - The escape sequences of Section 4.4 apply, plus `\$` for a literal dollar sign. Inside an interpolated string, `$` must either start a `${…}` hole or be escaped; a bare `$` is a compile-time error (reserving shorthand like `$name` for a future version).
+- A hole may contain a block comment: `f"${x /* px */}"`. A line comment cannot appear inside a hole, because the literal — like every string literal — ends at the end of the line.
 - In a plain (non-`f`) string literal, `$` has no special meaning and `\$` is not a valid escape.
 
 ## 5. Functions

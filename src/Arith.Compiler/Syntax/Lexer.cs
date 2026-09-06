@@ -204,9 +204,9 @@ public sealed class Lexer
     /// parser re-lexes each hole with <see cref="LexRange"/> and desugars
     /// the whole token, so no later stage needs a new node kind (design
     /// §7). Text runs follow the plain-string escape rules plus `\$`; a
-    /// bare `$` is a lexical error. Inside a hole, braces are depth-tracked
-    /// and quoted sections are skipped, so nested strings — nested
-    /// interpolated strings included — do not end the hole early.
+    /// bare `$` is a lexical error. A hole's matching `}` is found by
+    /// tokenizing (see <see cref="ScanHole"/>), so strings, block comments,
+    /// and nested interpolated strings inside it skip as whole units.
     /// </summary>
     private Token LexInterpolatedString()
     {
@@ -302,52 +302,41 @@ public sealed class Lexer
     }
 
     /// <summary>
-    /// Scans a `${…}` hole body up to its matching `}` — brace depth for
-    /// nested braces, quoted sections skipped whole so a string's `}` or
-    /// `"` cannot end the hole — and false at a newline or end of range
-    /// (the hole, and with it the literal, is unterminated).
+    /// Finds the `}` matching an already-consumed `${` by tokenizing the
+    /// rest of the line — with a throwaway diagnostic bag, since the real
+    /// lexing and reporting happen when the parser re-lexes the hole — and
+    /// tracking brace-token depth. Tokenizing is what makes hole contents
+    /// scan correctly: a string, a block comment, or a nested interpolated
+    /// string is one skipped unit, so a `}` or `"` inside it cannot end
+    /// the hole early. False when the line (or range) ends first: the
+    /// hole, and with it the literal, is unterminated.
     /// </summary>
     private bool ScanHole(out TextSpan span)
     {
         int start = _position;
-        int depth = 1;
-        while (!AtEnd && Current is not ('\n' or '\r'))
+        int lineEnd = _position;
+        while (lineEnd < _end && _text[lineEnd] is not ('\n' or '\r'))
         {
-            char c = Current;
-            if (c == '{')
+            lineEnd++;
+        }
+
+        int depth = 1;
+        foreach (Token token in LexRange(_text, TextSpan.FromBounds(start, lineEnd), new DiagnosticBag()))
+        {
+            if (token.Kind == SyntaxKind.OpenBraceToken)
             {
                 depth++;
             }
-            else if (c == '}')
+            else if (token.Kind == SyntaxKind.CloseBraceToken && --depth == 0)
             {
-                depth--;
-                if (depth == 0)
-                {
-                    span = TextSpan.FromBounds(start, _position);
-                    _position++;
-                    return true;
-                }
+                span = TextSpan.FromBounds(start, token.Span.Start);
+                _position = token.Span.End;
+                return true;
             }
-            else if (c == '"')
-            {
-                // Skip the quoted section; its contents (escapes included)
-                // are validated when the hole is re-lexed.
-                _position++;
-                while (!AtEnd && Current is not ('\n' or '\r' or '"'))
-                {
-                    _position += Current == '\\' && Lookahead is not ('\n' or '\r' or '\0') ? 2 : 1;
-                }
-
-                if (AtEnd || Current is '\n' or '\r')
-                {
-                    break; // Unterminated string inside the hole.
-                }
-            }
-
-            _position++;
         }
 
-        span = TextSpan.FromBounds(start, _position);
+        span = TextSpan.FromBounds(start, lineEnd);
+        _position = lineEnd;
         return false;
     }
 
