@@ -19,36 +19,33 @@ The goal of this project is to explore the fundamental stages of a compiler—le
 ## Example
 
 ```arith
-fn sum_range(start: i64, end: i64) -> i64 {
-    let total = 0;
-
-    for i in start..end {
-        total += i;
+fn average(values: []f64) -> f64 {
+    let total = 0.0;
+    for value in values {
+        total += value;
     }
-
-    return total;
+    return total / f64(len(values));
 }
 
-fn main() -> i32 {
-    let result = sum_range(1, 11);
+fn main() {
+    let scores = [80.0, 92.5, 77.0];
+    scores[2] = 88.0;
 
-    if result > 50 {
-        print("large:");
-        print(result);
+    let avg = average(scores);
+    print(f"average of ${len(scores)} scores = ${avg}");
+    if avg >= 85.0 {
+        print("high!");
     } else {
-        print("small:");
-        print(result);
+        print("keep going");
     }
-
-    return 0;
 }
 ```
 
 Expected output:
 
 ```text
-large:
-55
+average of 3 scores = 86.83333333333333
+high!
 ```
 
 ## Version 0.2 features
@@ -90,6 +87,9 @@ exits with code 2. With `arith run`, put `--` before values that start with
 arith run greet.arith 3 hello        # fn main(count: i64, label: string)
 arith run negate.arith -- -5
 ```
+
+Alternatively, `fn main(args: []string)` receives every argument verbatim —
+any count, no parsing, no usage exit (`examples/calc.arith` uses this form).
 
 The source file must be named `<program-name>.arith`, where `<program-name>`
 starts with a letter or `_` and contains only letters, digits, `_`, and `-`
@@ -151,7 +151,7 @@ The `version` command prints the CLI version:
 
 The repository is laid out as follows:
 
-- `examples/` — runnable example programs, from fizzbuzz to an ASCII Mandelbrot and a tail-call experiment (see [examples/README.md](examples/README.md))
+- `examples/` — runnable example programs, from fizzbuzz to an ASCII Mandelbrot, Conway's Game of Life, and a tail-call experiment (see [examples/README.md](examples/README.md))
 - `src/Arith.Compiler` — the compiler as a library (source text, diagnostics, lexer, parser, binder, and IL emitter; architecture in [docs/compiler-design.md](docs/compiler-design.md))
 - `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
 - `src/Arith.Cli` — the `arith` command-line tool (`build`, `run`, `version`), including the artifact writer and the NativeAOT packaging behind `build --aot`
