@@ -9,61 +9,61 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The compiler implements all of language v0.1, released as
-> [v0.1.0](https://github.com/yunabe/arith/releases/tag/v0.1.0) (architecture
-> in [docs/compiler-design.md](docs/compiler-design.md)).
-> [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) on `main` now drafts language v0.2
-> (arrays, `main(args: []string)`, string conversions, `f"..."`
-> interpolation), whose implementation is under way — string-to-primitive
-> conversions work; arrays and interpolation do not yet. The v0.1
-> specification is preserved at the `v0.1.0` tag.
+> The compiler implements all of language v0.2 — arrays, `main(args:
+> []string)`, string conversions, and `f"..."` interpolation on top of v0.1
+> — as defined by [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) (architecture in
+> [docs/compiler-design.md](docs/compiler-design.md)). Earlier versions are
+> preserved at their git tags:
+> [v0.1.0](https://github.com/yunabe/arith/releases/tag/v0.1.0).
 
 ## Example
 
 ```arith
-fn sum_range(start: i64, end: i64) -> i64 {
-    let total = 0;
-
-    for i in start..end {
-        total += i;
+fn average(values: []f64) -> f64 {
+    let total = 0.0;
+    for value in values {
+        total += value;
     }
-
-    return total;
+    return total / f64(len(values));
 }
 
-fn main() -> i32 {
-    let result = sum_range(1, 11);
+fn main() {
+    let scores = [80.0, 92.5, 77.0];
+    scores[2] = 88.0;
 
-    if result > 50 {
-        print("large:");
-        print(result);
+    let avg = average(scores);
+    print(f"average of ${len(scores)} scores = ${avg}");
+    if avg >= 85.0 {
+        print("high!");
     } else {
-        print("small:");
-        print(result);
+        print("keep going");
     }
-
-    return 0;
 }
 ```
 
 Expected output:
 
 ```text
-large:
-55
+average of 3 scores = 86.83333333333333
+high!
 ```
 
-## Version 0.1 features
+## Version 0.2 features
 
 - Primitive `bool`, `i32`, `i64`, `f32`, `f64`, and `string` types
+- Array types `[]T` (nesting included), with literals, a `[value; count]`
+  repeat form, indexing, element assignment, and the built-in `len`
 - Functions declared with `fn`, with support for `return`
 - Local variables declared with `let`, including reassignment
 - Arithmetic, comparison, and logical operators
-- `if` / `else`, `while`, and range-based `for` statements
+- `if` / `else`, `while`, and `for` over ranges and arrays
 - `break` and `continue`
 - A built-in `print` function that prints one value per line
-- Typed `main` parameters that receive parsed command-line arguments
-- Explicit numeric conversions
+- Interpolated strings: `f"x = ${x}"`
+- Typed `main` parameters that receive parsed command-line arguments, or
+  `main(args: []string)` receiving all of them verbatim
+- Explicit numeric conversions, and conversions between `string` and the
+  other primitives: `string(x)` and `i64("42")`
 - Checked integer arithmetic
 - Generation of a .NET assembly with `main` as its entry point
 
@@ -77,14 +77,20 @@ arith build hello.arith --aot        # compile into a single native executable
 arith run hello.arith [args...]      # compile and run, forwarding the exit code
 ```
 
-A `main` with parameters receives command-line arguments, parsed per parameter
-type before it runs ([LANGUAGE_SPEC.md §5.1](LANGUAGE_SPEC.md)); on a wrong
-argument count or an unparsable value the program prints a usage line and
-exits with code 2. With `arith run`, put `--` before values that start with
-`-`:
+A `main` may take command-line arguments in one of two forms
+([LANGUAGE_SPEC.md §5.1](LANGUAGE_SPEC.md)). With **primitive parameters**,
+the program takes exactly one argument per parameter, each parsed to that
+parameter's type before `main` runs; a wrong argument count or an unparsable
+value prints a usage line and exits with code 2. With **`main(args:
+[]string)`** — a single parameter, and the only array type `main` accepts —
+the program takes any number of arguments and receives them verbatim, with no
+parsing and no usage path; it converts them itself as needed
+(`examples/calc.arith` does). With `arith run`, put `--` before values that
+start with `-`:
 
 ```console
 arith run greet.arith 3 hello        # fn main(count: i64, label: string)
+arith run calc.arith sum 1 2 3       # fn main(args: []string)
 arith run negate.arith -- -5
 ```
 
@@ -143,12 +149,12 @@ dotnet run --project src/Arith.Cli -- version  # run the CLI
 The `version` command prints the CLI version:
 
 ```text
-0.1.0
+0.2.0
 ```
 
 The repository is laid out as follows:
 
-- `examples/` — runnable example programs, from fizzbuzz to an ASCII Mandelbrot and a tail-call experiment (see [examples/README.md](examples/README.md))
+- `examples/` — runnable example programs, from fizzbuzz to an ASCII Mandelbrot, Conway's Game of Life, and a tail-call experiment (see [examples/README.md](examples/README.md))
 - `src/Arith.Compiler` — the compiler as a library (source text, diagnostics, lexer, parser, binder, and IL emitter; architecture in [docs/compiler-design.md](docs/compiler-design.md))
 - `tests/Arith.Compiler.Tests` — xUnit v3 unit tests for the compiler stages
 - `src/Arith.Cli` — the `arith` command-line tool (`build`, `run`, `version`), including the artifact writer and the NativeAOT packaging behind `build --aot`
@@ -161,9 +167,10 @@ The repository is laid out as follows:
 All stages of the original roadmap — lexer, parser, name resolution and type
 checking, IL generation for expressions and control flow, assembly emission
 and execution, and diagnostics with test coverage — are implemented; language
-v0.1 is complete.
+v0.2 (arrays, array iteration, `main(args: []string)`, string conversions,
+and interpolated strings) is complete.
 
-Arrays, structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.1 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)). Released versions are recorded in [CHANGELOG.md](CHANGELOG.md).
+Structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.2 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)). Released versions are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

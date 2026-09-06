@@ -1,0 +1,37 @@
+// The Sieve of Eratosthenes marks composites in one []bool table. Compared
+// with primes.arith's trial division, each composite is crossed out by its
+// prime factors instead of testing every candidate independently.
+fn sieve(limit: i64) -> []bool {
+    let is_prime = [true; limit + 1];
+    if limit >= 0 {
+        is_prime[0] = false;
+    }
+    if limit >= 1 {
+        is_prime[1] = false;
+    }
+
+    let p = 2;
+    while p <= limit / p {
+        if is_prime[p] {
+            let multiple = p * p;
+            while multiple <= limit {
+                is_prime[multiple] = false;
+                multiple += p;
+            }
+        }
+        p += 1;
+    }
+    return is_prime;
+}
+
+fn main(limit: i64) {
+    let is_prime = sieve(limit);
+    let count = 0;
+    for n in 2..=limit {
+        if is_prime[n] {
+            print(n);
+            count += 1;
+        }
+    }
+    print(string(count) + " primes up to " + string(limit) + " (sieve)");
+}

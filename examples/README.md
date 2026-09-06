@@ -1,6 +1,6 @@
 # Arith examples
 
-Small programs showing what language v0.1 can express — and what the
+Small programs showing what the Arith language can express — and what the
 generated code actually does at runtime. Run any of them with:
 
 ```console
@@ -17,11 +17,16 @@ compile and produce the outputs shown here.
 | `tailsum.arith` | `tailsum.arith 100000` | **Tail-call experiment** — see below |
 | `gcd.arith` | `gcd.arith 252 105` → `gcd(252, 105) = 21` | Euclid's algorithm; two typed `main` arguments |
 | `primes.arith` | `primes.arith 30` | Trial division, `while` + early `return` |
+| `sieve.arith` | `sieve.arith 30` | Sieve of Eratosthenes; a mutable `[]bool` lookup table |
 | `fizzbuzz.arith` | `fizzbuzz.arith 15` | The classic; remainders and `else if` chains |
 | `collatz.arith` | `collatz.arith 27` → `… 111 steps` | `3n + 1` loop; a famous open problem |
 | `pow.arith` | `pow.arith 3 13` → `3^13 = 1594323` | Exponentiation by squaring via `/ 2` and `% 2` (no bitwise ops needed) |
 | `pi.arith` | `pi.arith 1000` → `pi ~= 3.141592653340544 …` | Nilakantha series; invariant float output |
 | `mandelbrot.arith` | `mandelbrot.arith` | ASCII Mandelbrot: nested loops, `f64`, building rows by string concatenation |
+| `sort.arith` | `sort.arith` | In-place insertion sort; array parameters share storage, and `for` visits values directly |
+| `life.arith` | `life.arith` | Conway's Game of Life; jagged `[][]bool` arrays and nested array iteration |
+| `calc.arith` | `calc.arith sum 1 2 3 4` → `sum of 4 numbers = 10` | `main(args: []string)`, `i64(string)` conversions, f-strings |
+| `matmul.arith` | `matmul.arith` → `… \| 139 154 \|` | Jagged `[][]i64` matrices, the §4.5 fill-in-a-loop idiom, `for` over arrays |
 
 ## The tail-call experiment (`tailsum.arith`)
 

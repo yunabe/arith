@@ -1,0 +1,41 @@
+// Matrix multiplication over jagged arrays ([][]i64). Shows nested array
+// types, the repeat form with the fill-in-a-loop idiom (LANGUAGE_SPEC
+// §4.5 — repeated rows would alias!), `for` over arrays, and building
+// output with interpolated strings.
+fn zeros(rows: i64, cols: i64) -> [][]i64 {
+    let m: [][]i64 = [[]; rows];
+    for r in 0..rows {
+        m[r] = [0; cols];
+    }
+    return m;
+}
+
+fn multiply(a: [][]i64, b: [][]i64) -> [][]i64 {
+    let result = zeros(len(a), len(b[0]));
+    for r in 0..len(a) {
+        for c in 0..len(b[0]) {
+            let sum = 0;
+            for k in 0..len(b) {
+                sum += a[r][k] * b[k][c];
+            }
+            result[r][c] = sum;
+        }
+    }
+    return result;
+}
+
+fn row_text(row: []i64) -> string {
+    let text = "";
+    for value in row {
+        text += f" ${value}";
+    }
+    return text;
+}
+
+fn main() {
+    let a = [[1, 2, 3], [4, 5, 6]];
+    let b = [[7, 8], [9, 10], [11, 12]];
+    for row in multiply(a, b) {
+        print(f"|${row_text(row)} |");
+    }
+}

@@ -23,9 +23,16 @@ public sealed class ExampleProgramsTests
     [InlineData("tailsum.arith", new[] { "1000" }, "sum(1..=1000) = 500500")]
     [InlineData("gcd.arith", new[] { "252", "105" }, "gcd(252, 105) = 21")]
     [InlineData("primes.arith", new[] { "30" }, "10 primes up to 30")]
+    [InlineData("sieve.arith", new[] { "30" }, "10 primes up to 30 (sieve)")]
     [InlineData("collatz.arith", new[] { "27" }, "collatz(27) reaches 1 after 111 steps")]
     [InlineData("pow.arith", new[] { "3", "13" }, "3^13 = 1594323")]
     [InlineData("pi.arith", new[] { "1000" }, "pi ~= 3.141592653340544  (1000 terms)")]
+    [InlineData("sort.arith", new string[] { }, "after:  [-9, -3, 0, 2, 2, 5, 7, 11]")]
+    [InlineData("life.arith", new string[] { }, "population after 4 generations = 5")]
+    [InlineData("calc.arith", new[] { "sum", "1", "2", "3", "4" }, "sum of 4 numbers = 10")]
+    [InlineData("calc.arith", new[] { "prod", "2", "3", "7" }, "prod of 3 numbers = 42")]
+    [InlineData("calc.arith", new[] { "max", "3", "9", "4" }, "max of 3 numbers = 9")]
+    [InlineData("matmul.arith", new string[0], "| 139 154 |")]
     public void Example_ProducesItsDocumentedFinalLine(string name, string[] arguments, string expectedLastLine)
     {
         CliResult result = CliRunner.Run(["run", ExamplePath(name), .. arguments]);

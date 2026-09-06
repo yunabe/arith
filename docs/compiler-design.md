@@ -1,4 +1,4 @@
-# Arith compiler design (v0.1)
+# Arith compiler design
 
 This document describes the architecture of the Arith compiler: how the code
 is organized into projects, what the pipeline stages are, which data
@@ -11,7 +11,7 @@ defines *how*. The IL-emission techniques it builds on are described in
 
 ## 1. Goals and constraints
 
-- Compile Arith v0.1 source files to .NET assemblies (`arith build`) and run
+- Compile Arith source files to .NET assemblies (`arith build`) and run
   them (`arith run`), matching the CLI sketched in the README.
 - Keep the classic stages — lexing, parsing, name resolution / type checking,
   IL generation — as separate, individually testable components.
@@ -333,11 +333,18 @@ keeping its SRM approach. Structure:
    launchers is the CLI artifact writer's job, and the `--aot` mode packages
    the same `EmitResult` bytes via `NativeAotPublisher` — so there is exactly
    one IL-generation path.
-4. **Entry-point bridge** — a `main` with parameters (spec §5.1) gets a
-   synthesized `static int32 <Main>(string[] args)` entry point that checks
-   the argument count, parses each argument with the invariant `TryParse`
-   overloads (no exception-handling regions in the generated IL), and either
-   calls the user's main or prints a usage line to stderr and returns 2. The
+4. **Entry-point bridge** — every `main` (spec §5.1) runs behind a
+   synthesized `static int32 <Main>(string[] args)` entry point, in one of
+   two shapes. For primitive parameters — the parameterless `main`
+   included, since zero parameters still means zero arguments — the bridge
+   checks the argument count, parses each argument with the invariant
+   `TryParse` overloads (no exception-handling regions in the generated
+   IL), and either calls the user's main or prints a usage line to stderr
+   and returns 2. For the `main(args: []string)` form the bridge is just
+   `ldarg.0; call main`: the runtime's array passes straight through, with
+   no count check, no parsing, and no usage path, so a program taking any
+   number of arguments needs no generated validation at all. Both shapes
+   normalize the exit code (a `void` main yields 0). The
    bridge is hand-shaped IL rather than a bound tree because it needs
    `string[]`, byref locals, and BCL calls Arith's type system cannot
    express — and it is deliberately the *only* such code. Decision rule: the
@@ -424,6 +431,9 @@ Steps 4–7 each extend binder + emitter + tests together, keeping the compiler
 runnable at every step.
 
 ## 7. Version 0.2 plan
+
+*(Written before the v0.2 work and kept as its as-built record; every step
+below is implemented and released as v0.2.0.)*
 
 Language v0.2 (LANGUAGE_SPEC.md: arrays, `main(args: []string)`, string
 conversions, interpolated strings) extends the same architecture — no new

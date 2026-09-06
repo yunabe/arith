@@ -1,0 +1,30 @@
+// Insertion sort mutates the array it receives. Arrays are reference values,
+// so main observes the changes without the function returning the array.
+fn insertion_sort(values: []i64) {
+    for i in 1..len(values) {
+        let value = values[i];
+        let j = i;
+        while j > 0 && values[j - 1] > value {
+            values[j] = values[j - 1];
+            j -= 1;
+        }
+        values[j] = value;
+    }
+}
+
+fn format(values: []i64) -> string {
+    let result = "[";
+    let separator = "";
+    for value in values {
+        result += separator + string(value);
+        separator = ", ";
+    }
+    return result + "]";
+}
+
+fn main() {
+    let values = [7, -3, 11, 2, 0, 5, 2, -9];
+    print("before: " + format(values));
+    insertion_sort(values);
+    print("after:  " + format(values));
+}
