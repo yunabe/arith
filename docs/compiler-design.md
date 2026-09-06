@@ -422,3 +422,83 @@ the riskiest part and should not wait until last:
 
 Steps 4–7 each extend binder + emitter + tests together, keeping the compiler
 runnable at every step.
+
+## 7. Version 0.2 plan
+
+Language v0.2 (LANGUAGE_SPEC.md: arrays, `main(args: []string)`, string
+conversions, interpolated strings) extends the same architecture — no new
+pipeline stages, no changes to the facades. The order puts the riskiest new
+machinery (recursive types and array emission) early and the purely
+front-end sugar last:
+
+1. **String-to-primitive conversions** (spec §7). No syntax work at all: the
+   binder legalizes `string → bool/i32/i64/f32/f64`, and the emitter calls
+   the invariant `T.Parse(string, NumberStyles, IFormatProvider)` /
+   `Boolean.Parse` — for integers and bool, the exceptions they throw *are*
+   the specified runtime error. Floats need one extra step, as the v0.1
+   entry-point bridge already learned: .NET's `Parse` returns infinity for
+   an overflowing exponent and accepts the `Infinity`/`NaN` spellings, so
+   the emitter follows the parse with an `IsFinite` check and an explicit
+   `newobj`/`throw` of a `FormatException`. Still no exception-handling
+   *regions* — a throw needs no try/catch — and warm-up sized.
+2. **Array core**: types, creation, indexing, `len`.
+   - `ArithType` grows a composed array type while keeping reference
+     equality: an interning cache maps element type → array type, so
+     structural equality (spec §3.1) stays pointer comparison.
+   - Lexer: `[` and `]` tokens. Parser: the `{ "[]" } primitive-type` type
+     production, array expressions (list and repeat forms), postfix index
+     chains, and multi-index assignment targets.
+   - Binder: the §7 structural expected-type propagation into element lists
+     and the repeat form; `len` as the second compiler-recognized builtin —
+     expression-valued, unlike `print`. A second value *kind* also means
+     auditing every binder path that today equates "not void" with
+     "primitive": `print` and `string(…)` must reject array arguments with
+     a source diagnostic rather than binding them and failing in the
+     emitter — a check that, via the desugaring, also enforces the
+     primitive-hole rule for interpolated strings later.
+   - Emitter: `newarr`/`ldlen` plus an element-kind dispatch for
+     `ldelem`/`stelem` (`.i4/.i8/.r4/.r8` for numerics, `ldelem.u1` loads /
+     `stelem.i1` stores for bool — the load must zero-extend — and `.ref`
+     for string *and* array elements, so the dispatch nested arrays need is
+     already paid for by `[]string`). **Width discipline**: these opcodes
+     traffic in native integers while Arith's counts, indexes, and lengths
+     are `i64`, so the repeat count converts with `conv.ovf.u` before
+     `newarr` (a negative count faults right there, satisfying spec §4.5),
+     every index converts with `conv.ovf.i` before `ldelem`/`stelem` (a
+     negative index passes through to fault as the bounds check, and an
+     index above native range faults instead of truncating on a 32-bit
+     target), and `ldlen`'s native-unsigned result zero-extends to `i64`
+     with `conv.u8` for `len`. Array-of-array element tokens need the
+     **TypeSpec** table (a signature blob per array type, cached) — the one
+     genuinely new metadata concept in v0.2. The repeat form lowers to a
+     small IL fill loop; the CLR provides bounds checks for free.
+3. **Array iteration and the entry point**: `for x in a` lowers to an index
+   loop over temps holding the array and its length (element loaded per
+   iteration, per spec §9.3); the entry-point bridge gains the
+   `main(args: []string)` variant, which passes the runtime's `string[]`
+   through without parsing or the usage path. The binder's entry-point
+   validation grows to match: `main` accepts either all-primitive
+   parameters or exactly one `[]string` parameter, and every other
+   array-bearing signature — `main(xs: []i32)`, `main(args: []string,
+   n: i64)` — is a source diagnostic, so no invalid form ever reaches the
+   typed-argument bridge.
+4. **Interpolated strings** (spec §4.6). Front end only, by desugaring: the
+   parser produces the same concat-of-`string(…)` tree the equivalent `+`
+   expression would, so the binder and emitter change not at all. Lexing
+   strategy: the lexer scans an `f"…"` as one token recording its segment
+   spans (text runs and `${…}` holes, with brace/quote tracking inside
+   holes); the parser then runs the ordinary lexer+expression parser over
+   each hole span. That reuses the existing machinery instead of teaching
+   the main lexer a mode stack, at the cost of one re-lex per hole.
+5. **Hardening and release**: examples that need the new features (a
+   grid/matrix program, an `args`-driven CLI), the spec-coverage sweep,
+   docs/diagnostics.md rows for the new codes, CHANGELOG — then tag
+   `v0.2.0`.
+
+New diagnostics (codes assigned as each lands, registry order preserved):
+mixed or undeterminable array element types, an empty array literal with no
+expected type, indexing a non-array, `len` misuse, an array argument to
+`print` or `string(…)`, an invalid array-bearing `main` signature, and —
+lexical — a bare `$` inside an interpolated string. String-conversion
+failures and array bounds/length faults are runtime errors, not
+diagnostics.
