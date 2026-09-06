@@ -434,9 +434,13 @@ front-end sugar last:
 1. **String-to-primitive conversions** (spec §7). No syntax work at all: the
    binder legalizes `string → bool/i32/i64/f32/f64`, and the emitter calls
    the invariant `T.Parse(string, NumberStyles, IFormatProvider)` /
-   `Boolean.Parse` — the exceptions they throw *are* the specified runtime
-   error, so no exception-handling regions and no new machinery. Warm-up
-   sized, and immediately useful.
+   `Boolean.Parse` — for integers and bool, the exceptions they throw *are*
+   the specified runtime error. Floats need one extra step, as the v0.1
+   entry-point bridge already learned: .NET's `Parse` returns infinity for
+   an overflowing exponent and accepts the `Infinity`/`NaN` spellings, so
+   the emitter follows the parse with an `IsFinite` check and an explicit
+   `newobj`/`throw` of a `FormatException`. Still no exception-handling
+   *regions* — a throw needs no try/catch — and warm-up sized.
 2. **Array core**: types, creation, indexing, `len`.
    - `ArithType` grows a composed array type while keeping reference
      equality: an interning cache maps element type → array type, so
