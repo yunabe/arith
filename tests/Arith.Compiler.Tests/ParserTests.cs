@@ -215,6 +215,13 @@ public sealed class ParserTests
     [InlineData("fn t() { f() = 1; }", "f()")]
     [InlineData("fn t() { 1 + 2 = 3; }", "1 + 2")]
     [InlineData("fn t() { (a) = 1; }", "(a)")] // Spec §8.4: the target is a name or index chain, not any expression.
+    // The name-root rule applies to the whole chain, not just the outer
+    // node: an index chain rooted at a call, literal, or parenthesized
+    // expression is not a target either.
+    [InlineData("fn t() { identity(values)[0] = 9; }", "identity(values)[0]")]
+    [InlineData("fn t() { [1, 2][0] = 9; }", "[1, 2][0]")]
+    [InlineData("fn t() { (a)[0] = 1; }", "(a)[0]")]
+    [InlineData("fn t() { f()[0][1] = 1; }", "f()[0][1]")]
     public void Parse_InvalidAssignmentTarget_ReportsArith2004(string source, string targetText)
     {
         SyntaxTree tree = Parse(source);

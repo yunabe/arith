@@ -374,7 +374,7 @@ public sealed class Parser
             Token operatorToken = Consume();
             ExpressionSyntax value = ParseExpression();
             MatchToken(SyntaxKind.SemicolonToken);
-            if (expression is not (NameExpressionSyntax or IndexExpressionSyntax or ErrorExpressionSyntax))
+            if (!IsAssignmentTarget(expression))
             {
                 _diagnostics.Report(ErrorCodes.InvalidAssignmentTarget, expression.Span);
                 return new ErrorStatementSyntax(SpanFrom(start));
@@ -390,6 +390,22 @@ public sealed class Parser
 
         MatchToken(SyntaxKind.SemicolonToken);
         return new ExpressionStatementSyntax(expression, SpanFrom(start));
+    }
+
+    /// <summary>
+    /// Spec §8.4: an assignment target is an index chain rooted at a
+    /// variable name — `a` or `grid[i][j]`, never a call, literal, or
+    /// parenthesized root like `f(x)[0]`, whose mutation the grammar
+    /// forbids. An error root was already diagnosed and passes silently.
+    /// </summary>
+    private static bool IsAssignmentTarget(ExpressionSyntax expression)
+    {
+        while (expression is IndexExpressionSyntax index)
+        {
+            expression = index.Target;
+        }
+
+        return expression is NameExpressionSyntax or ErrorExpressionSyntax;
     }
 
     private static bool CanStartExpression(SyntaxKind kind) =>
