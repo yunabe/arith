@@ -55,9 +55,11 @@ string tooling on top of 0.1 (whose specification is preserved at the
   the TypeSpec metadata table.
 - The entry-point bridge passes the runtime's `string[]` straight through
   to a `main(args: []string)`.
-- New examples: `calc.arith` (an `args`-driven calculator) and
-  `matmul.arith` (jagged-array matrix multiplication); both run in CI like
-  every example.
+- Five new examples: `calc.arith` (an `args`-driven calculator),
+  `matmul.arith` (jagged-array matrix multiplication), `sort.arith`
+  (in-place insertion sort through shared array storage), `sieve.arith`
+  (a `[]bool` Sieve of Eratosthenes), and `life.arith` (Conway's Game of
+  Life on a jagged `[][]bool` board); all run in CI like every example.
 
 ## [0.1.0] - 2026-09-03
 
