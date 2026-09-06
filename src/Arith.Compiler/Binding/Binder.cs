@@ -132,14 +132,24 @@ public sealed class Binder
             _diagnostics.Report(ErrorCodes.InvalidEntryPointSignature, syntax.Identifier.Span);
         }
 
-        // The entry-point bridge parses one command-line argument per
-        // parameter, which only works for primitives; array parameters have
-        // no argument form (the `main(args: []string)` variant is a future
-        // feature).
+        // Spec §5.1: either every parameter is a primitive receiving one
+        // parsed argument each, or the single parameter is `[]string` and
+        // receives all arguments verbatim. Any other array-bearing shape
+        // has no argument form.
+        ArithType argsType = ArithType.String.ArrayOf();
+        if (main.Parameters.Length == 1 && main.Parameters[0].Type == argsType)
+        {
+            return;
+        }
+
         for (int i = 0; i < main.Parameters.Length; i++)
         {
             ArithType parameterType = main.Parameters[i].Type;
-            if (parameterType.IsArray)
+            if (parameterType == argsType)
+            {
+                _diagnostics.Report(ErrorCodes.EntryPointArgsMustBeAlone, syntax.Parameters[i].Span);
+            }
+            else if (parameterType.IsArray)
             {
                 _diagnostics.Report(
                     ErrorCodes.InvalidEntryPointParameter, syntax.Parameters[i].Span, parameterType);
@@ -230,6 +240,8 @@ public sealed class Binder
                 return BindWhileStatement(loop);
             case ForStatementSyntax loop:
                 return BindForStatement(loop);
+            case ForEachStatementSyntax loop:
+                return BindForEachStatement(loop);
             case BreakStatementSyntax:
                 return BindBreakOrContinue(syntax, "break", static () => new BoundBreakStatement());
             case ContinueStatementSyntax:
@@ -280,6 +292,35 @@ public sealed class Binder
         return new BoundForStatement(
             variable, start, end,
             syntax.RangeOperator.Kind == SyntaxKind.DotDotEqualsToken, body);
+    }
+
+    private BoundForEachStatement BindForEachStatement(ForEachStatementSyntax syntax)
+    {
+        // Spec §9.3: the iterable must be array-typed and is evaluated once,
+        // before the loop.
+        BoundExpression array = ResolveToDefault(BindExpression(syntax.Iterable, expected: null));
+        if (array.Type == ArithType.Void)
+        {
+            _diagnostics.Report(ErrorCodes.ExpressionHasNoValue, syntax.Iterable.Span);
+            array = new BoundErrorExpression();
+        }
+        else if (!array.Type.IsError && !array.Type.IsArray)
+        {
+            _diagnostics.Report(ErrorCodes.NotIterable, syntax.Iterable.Span, array.Type);
+            array = new BoundErrorExpression();
+        }
+
+        // The loop variable has the element type and follows the range
+        // loop's rules: scoped to the body, not reassignable (spec §9.3).
+        ArithType elementType = array.Type.IsError ? ArithType.Error : array.Type.ElementType!;
+        PushScope();
+        LocalSymbol variable = new(syntax.Identifier.Text, elementType, isReadOnly: true);
+        DeclareVariable(variable, syntax.Identifier);
+        _loopDepth++;
+        BoundBlock body = BindBlock(syntax.Body);
+        _loopDepth--;
+        PopScope();
+        return new BoundForEachStatement(variable, array, body);
     }
 
     private BoundStatement BindBreakOrContinue(
@@ -365,7 +406,8 @@ public sealed class Binder
 
         if (variable is LocalSymbol { IsReadOnly: true })
         {
-            // Spec §9.3: the range-for loop variable cannot be reassigned.
+            // Spec §9.3: a for loop variable (range or array iteration)
+            // cannot be reassigned.
             _diagnostics.Report(ErrorCodes.LoopVariableReassigned, name.Identifier.Span, variable.Name);
             BindExpressionWithType(syntax.Value, variable.Type);
             return new BoundErrorStatement();

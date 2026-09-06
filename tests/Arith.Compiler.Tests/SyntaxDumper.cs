@@ -38,6 +38,8 @@ internal static class SyntaxDumper
         ForStatementSyntax loop =>
             $"(for {loop.Identifier.Text} {loop.RangeOperator.Text} "
             + $"{Dump(loop.Start)} {Dump(loop.End)} {Dump(loop.Body)})",
+        ForEachStatementSyntax loop =>
+            $"(for-in {loop.Identifier.Text} {Dump(loop.Iterable)} {Dump(loop.Body)})",
         BreakStatementSyntax => "(break)",
         ContinueStatementSyntax => "(continue)",
         ErrorStatementSyntax => "(error-stmt)",

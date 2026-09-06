@@ -717,11 +717,75 @@ public sealed class BinderTests
     [Fact]
     public void ArrayParameterOnMain_ReportsArith3025AtTheParameter()
     {
-        Compilation compilation = Compile("fn main(args: []string) { }");
+        Compilation compilation = Compile("fn main(xs: []i32) { }");
 
         Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
         Assert.Equal("ARITH3025", diagnostic.Code);
-        Assert.Equal("'main' cannot declare a parameter of type '[]string'", diagnostic.Message);
+        Assert.Equal("'main' cannot declare a parameter of type '[]i32'", diagnostic.Message);
+    }
+
+    [Theory]
+    [InlineData("fn main(args: []string) { }")]
+    [InlineData("fn main(args: []string) -> i32 { return i32(len(args)); }")]
+    public void SoleStringArrayParameterOnMain_IsLegal(string source)
+    {
+        // Spec §5.1: exactly one `[]string` parameter receives all
+        // command-line arguments verbatim.
+        Compilation compilation = Compile(source);
+
+        Assert.Empty(compilation.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("fn main(args: []string, n: i64) { }")]
+    [InlineData("fn main(n: i64, args: []string) { }")]
+    [InlineData("fn main(a: []string, b: []string) { }", 2)]
+    public void CombinedStringArrayParameterOnMain_ReportsArith3027(string source, int count = 1)
+    {
+        // Spec §5.1: the `[]string` form must be main's only parameter.
+        Compilation compilation = Compile(source);
+
+        Assert.Equal(count, compilation.Diagnostics.Count(d => d.Code == "ARITH3027"));
+        Assert.Equal(count, compilation.Diagnostics.Length);
+    }
+
+    // ---- Array iteration (spec §9.3) ------------------------------------
+
+    [Theory]
+    [InlineData("[1, 2]", "i64")]
+    [InlineData("[1i32; 3]", "i32")]
+    [InlineData("[[1], [2]]", "[]i64")] // A row of a nested array is itself an array.
+    [InlineData("[\"a\"]", "string")]
+    public void ForEachVariable_GetsTheElementType(string iterable, string expectedType)
+    {
+        Compilation compilation = CompileMain($"for x in {iterable} {{ let captured = x; }}");
+
+        Assert.Empty(compilation.Diagnostics);
+        BoundForEachStatement loop =
+            Assert.IsType<BoundForEachStatement>(FunctionBody(compilation, "main").Statements[0]);
+        Assert.Equal(expectedType, loop.Variable.Type.Name);
+    }
+
+    [Theory]
+    [InlineData("for x in 5 { }", "ARITH3026")]
+    [InlineData("for c in \"abc\" { }", "ARITH3026")] // Strings are not iterable in v0.2.
+    [InlineData("for x in true { }", "ARITH3026")]
+    [InlineData("let a = [1]; for x in a { x = 2; }", "ARITH3018")] // Read-only, like a range variable.
+    [InlineData("for x in [1] { } print(x);", "ARITH3005")]         // Scoped to the body.
+    public void InvalidForEach_ReportsTheSpecifiedCode(string body, string expectedCode)
+    {
+        Compilation compilation = CompileMain(body);
+
+        Assert.Contains(expectedCode, Codes(compilation));
+    }
+
+    [Fact]
+    public void BreakAndContinue_AreAllowedInsideForEach()
+    {
+        Compilation compilation =
+            CompileMain("for x in [1, 2, 3] { if x == 2 { continue; } break; }");
+
+        Assert.Empty(compilation.Diagnostics);
     }
 
     [Fact]

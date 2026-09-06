@@ -324,16 +324,24 @@ public sealed class Parser
         return new WhileStatementSyntax(condition, body, SpanFrom(start));
     }
 
-    // for-statement = "for" , identifier , "in" , expression , ( ".." | "..=" ) , expression , block ;
-    private ForStatementSyntax ParseForStatement()
+    // for-statement = "for" , identifier , "in" , expression ,
+    //                 [ ( ".." | "..=" ) , expression ] , block ;
+    private StatementSyntax ParseForStatement()
     {
         int start = Consume().Span.Start;
         Token identifier = MatchToken(SyntaxKind.IdentifierToken);
         MatchToken(SyntaxKind.InKeyword);
         ExpressionSyntax startExpression = ParseExpression();
-        Token rangeOperator = Current.Kind == SyntaxKind.DotDotEqualsToken
-            ? Consume()
-            : MatchToken(SyntaxKind.DotDotToken);
+
+        // Without a range operator the expression is an array to iterate
+        // (spec §9.3).
+        if (Current.Kind is not (SyntaxKind.DotDotToken or SyntaxKind.DotDotEqualsToken))
+        {
+            BlockSyntax iterationBody = ParseBlock();
+            return new ForEachStatementSyntax(identifier, startExpression, iterationBody, SpanFrom(start));
+        }
+
+        Token rangeOperator = Consume();
         ExpressionSyntax endExpression = ParseExpression();
         BlockSyntax body = ParseBlock();
         return new ForStatementSyntax(

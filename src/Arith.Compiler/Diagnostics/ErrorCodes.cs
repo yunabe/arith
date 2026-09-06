@@ -111,4 +111,10 @@ public static class ErrorCodes
 
     public static readonly DiagnosticDescriptor InvalidEntryPointParameter =
         new("ARITH3025", "'main' cannot declare a parameter of type '{0}'");
+
+    public static readonly DiagnosticDescriptor NotIterable =
+        new("ARITH3026", "'for' cannot iterate over a value of type '{0}'");
+
+    public static readonly DiagnosticDescriptor EntryPointArgsMustBeAlone =
+        new("ARITH3027", "'main' cannot combine a '[]string' parameter with other parameters");
 }

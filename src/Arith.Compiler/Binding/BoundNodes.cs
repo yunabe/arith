@@ -80,6 +80,17 @@ public sealed record BoundForStatement(
     bool IsInclusive,
     BoundBlock Body) : BoundStatement;
 
+/// <summary>
+/// `for variable in array { body }` (spec §9.3). The array is evaluated
+/// once; each iteration reads the element at the current index when it
+/// starts, so element writes are visible to later iterations. Variable has
+/// the array's element type and is read-only.
+/// </summary>
+public sealed record BoundForEachStatement(
+    LocalSymbol Variable,
+    BoundExpression Array,
+    BoundBlock Body) : BoundStatement;
+
 public sealed record BoundBreakStatement : BoundStatement;
 
 public sealed record BoundContinueStatement : BoundStatement;

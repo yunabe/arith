@@ -384,8 +384,25 @@ public sealed class Emitter
         BlobBuilder code = new();
         ControlFlowBuilder controlFlow = new();
         InstructionEncoder il = new(code, controlFlow);
-        LabelHandle usage = il.DefineLabel();
         ImmutableArray<ParameterSymbol> parameters = main.Parameters;
+
+        // `main(args: []string)` receives the runtime's string[] verbatim
+        // (spec §5.1): no count check, no parsing, no usage path — the
+        // bridge only normalizes the exit code.
+        if (parameters is [{ Type: var soleType }] && soleType == ArithType.String.ArrayOf())
+        {
+            il.LoadArgument(0);
+            il.Call(_methodHandles[main]);
+            if (main.ReturnType == ArithType.Void)
+            {
+                il.LoadConstantI4(0);
+            }
+
+            il.OpCode(ILOpCode.Ret);
+            return _bodyStream.AddMethodBody(il, maxStack: 1, localVariablesSignature: default);
+        }
+
+        LabelHandle usage = il.DefineLabel();
 
         // if (args.Length != parameters.Length) goto usage;
         il.LoadArgument(0);
@@ -726,6 +743,9 @@ public sealed class Emitter
                 case BoundForStatement loop:
                     EmitForStatement(loop);
                     break;
+                case BoundForEachStatement loop:
+                    EmitForEachStatement(loop);
+                    break;
                 case BoundBreakStatement:
                     _il.Branch(ILOpCode.Br, _loops[^1].BreakTarget);
                     break;
@@ -868,6 +888,66 @@ public sealed class Emitter
                 _il.Branch(ILOpCode.Br, body);
             }
 
+            _il.MarkLabel(exit);
+        }
+
+        /// <summary>
+        /// `for x in a` lowers to an index loop over temps holding the array
+        /// and its length (spec §9.3, design §7): the element loads at the
+        /// start of each iteration — so element writes are visible to later
+        /// iterations — and `continue` targets the increment.
+        /// </summary>
+        private void EmitForEachStatement(BoundForEachStatement loop)
+        {
+            ArithType elementType = loop.Array.Type.ElementType!;
+            int variableSlot = AllocateLocal(loop.Variable);
+            int arraySlot = AllocateSlot(loop.Array.Type);
+            int lengthSlot = AllocateSlot(ArithType.I64);
+            int indexSlot = AllocateSlot(ArithType.I64);
+
+            // Spec §9.3: the array expression evaluates once, before the loop.
+            EmitExpression(loop.Array);
+            _il.OpCode(ILOpCode.Dup);
+            Push();
+            _il.StoreLocal(arraySlot);
+            Pop();
+            _il.OpCode(ILOpCode.Ldlen);
+            _il.OpCode(ILOpCode.Conv_u8);
+            _il.StoreLocal(lengthSlot);
+            Pop();
+            _il.LoadConstantI8(0);
+            Push();
+            _il.StoreLocal(indexSlot);
+            Pop();
+
+            // br TEST; BODY: x = a[i]; body; INC: i += 1; TEST: if i < len goto BODY
+            LabelHandle body = _il.DefineLabel();
+            LabelHandle increment = _il.DefineLabel();
+            LabelHandle test = _il.DefineLabel();
+            LabelHandle exit = _il.DefineLabel();
+            _il.Branch(ILOpCode.Br, test);
+            _il.MarkLabel(body);
+            _il.LoadLocal(arraySlot);
+            Push();
+            _il.LoadLocal(indexSlot);
+            Push();
+            _il.OpCode(ILOpCode.Conv_i); // 0 <= i < length always fits native int.
+            EmitLoadElement(elementType);
+            Pop();
+            _il.StoreLocal(variableSlot);
+            Pop();
+            _loops.Add((ContinueTarget: increment, BreakTarget: exit));
+            EmitStatement(loop.Body);
+            _loops.RemoveAt(_loops.Count - 1);
+            _il.MarkLabel(increment);
+            EmitVariableIncrement(indexSlot);
+            _il.MarkLabel(test);
+            _il.LoadLocal(indexSlot);
+            Push();
+            _il.LoadLocal(lengthSlot);
+            Push();
+            _il.Branch(ILOpCode.Blt, body);
+            Pop(2);
             _il.MarkLabel(exit);
         }
 
