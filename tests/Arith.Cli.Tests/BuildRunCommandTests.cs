@@ -484,6 +484,56 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_StringConversions_ParseInvariantly()
+    {
+        // Spec v0.2 §7: strings parse to primitives with the main-argument
+        // grammar (sign, float-only exponent, whitespace, invariant).
+        string source = WriteSource("parse.arith", """
+            fn double(s: string) -> i64 {
+                return i64(s) * 2;
+            }
+
+            fn main() {
+                print(double("21"));
+                print(i64(" -7 "));
+                print(i32("5") + 1i32);
+                print(f64("2.5e2"));
+                print(f32("0.5"));
+                print(bool("TRUE"));
+                print(bool(" false "));
+                print(i64(string(9223372036854775807)) == 9223372036854775807);
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        string[] expected = ["42", "-7", "6", "250", "0.5", "true", "false", "true"];
+        Assert.Equal(expected, Lines(result.Output));
+    }
+
+    [Theory]
+    [InlineData("print(i64(\"12.5\"));", "System.FormatException")]   // Not an integer.
+    [InlineData("print(i64(\"1e2\"));", "System.FormatException")]    // Exponents are float-only.
+    [InlineData("print(i64(\"9223372036854775808\"));", "System.OverflowException")]
+    [InlineData("print(i32(\"3000000000\"));", "System.OverflowException")]
+    [InlineData("print(f64(\"1e5000\"));", "System.FormatException")] // Overflows to infinity.
+    [InlineData("print(f64(\"Infinity\"));", "System.FormatException")]
+    [InlineData("print(f64(\"NaN\"));", "System.FormatException")]
+    [InlineData("print(bool(\"yes\"));", "System.FormatException")]
+    public void Run_InvalidStringConversion_FailsAtRuntime(string statement, string exceptionName)
+    {
+        string source = WriteSource("badparse.arith", $"fn main() {{ {statement} }}");
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Contains(exceptionName, result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Run_StringEquality_OnRuntimeBuiltStrings()
     {
         // string(1) + "x" is built at runtime by String.Concat, so it cannot

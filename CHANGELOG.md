@@ -11,8 +11,10 @@ All notable changes to Arith are recorded here. The format follows
 - LANGUAGE_SPEC.md drafts language version 0.2: array types `[]T` with
   literals, indexing, and `len`; `for` over arrays; `fn main(args:
   []string)`; conversions from `string` to the other primitive types; and
-  interpolated `f"..."` strings. Specification only — the compiler still
-  implements v0.1.
+  interpolated `f"..."` strings.
+- The compiler implements the v0.2 string-to-primitive conversions
+  (`i64(s)`, `bool(s)`, …); parse failures, non-finite floats included, are
+  runtime errors.
 
 ## [0.1.0] - 2026-09-03
 
