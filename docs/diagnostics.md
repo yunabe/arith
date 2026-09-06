@@ -58,7 +58,7 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH3015 | `function must return a value of type '{0}'` | `return;` in a function that declares a return type |
 | ARITH3016 | `not every path through '{0}' returns a value` | A value-returning function has a reachable path without `return` |
 | ARITH3017 | `expression does not produce a value` | A call to a function with no return type is used where a value is required |
-| ARITH3018 | `loop variable '{0}' cannot be reassigned` | A range-`for` variable is the target of an assignment |
+| ARITH3018 | `loop variable '{0}' cannot be reassigned` | A `for` loop variable (range or array iteration) is the target of an assignment |
 | ARITH3019 | `'{0}' can only be used inside a loop` | `break` or `continue` outside `while`/`for` |
 | ARITH3020 | `cannot convert from '{0}' to '{1}'` | An explicit conversion pair is unsupported (`bool` either way, or an array operand) |
 | ARITH3021 | `an empty array literal requires an expected array type` | `[]` appears without an expected array type to supply its element type |

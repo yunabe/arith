@@ -406,7 +406,8 @@ public sealed class Binder
 
         if (variable is LocalSymbol { IsReadOnly: true })
         {
-            // Spec §9.3: the range-for loop variable cannot be reassigned.
+            // Spec §9.3: a for loop variable (range or array iteration)
+            // cannot be reassigned.
             _diagnostics.Report(ErrorCodes.LoopVariableReassigned, name.Identifier.Span, variable.Name);
             BindExpressionWithType(syntax.Value, variable.Type);
             return new BoundErrorStatement();

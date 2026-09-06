@@ -29,7 +29,7 @@ public sealed class ParameterSymbol(string name, ArithType type, int index) : Va
 
 public sealed class LocalSymbol(string name, ArithType type, bool isReadOnly = false) : VariableSymbol(name, type)
 {
-    /// <summary>True for a range-for loop variable, which cannot be reassigned (spec §9.3).</summary>
+    /// <summary>True for a `for` loop variable — range or array iteration — which cannot be reassigned (spec §9.3).</summary>
     public bool IsReadOnly { get; } = isReadOnly;
 }
 
