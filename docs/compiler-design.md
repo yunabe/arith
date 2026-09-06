@@ -422,3 +422,58 @@ the riskiest part and should not wait until last:
 
 Steps 4–7 each extend binder + emitter + tests together, keeping the compiler
 runnable at every step.
+
+## 7. Version 0.2 plan
+
+Language v0.2 (LANGUAGE_SPEC.md: arrays, `main(args: []string)`, string
+conversions, interpolated strings) extends the same architecture — no new
+pipeline stages, no changes to the facades. The order puts the riskiest new
+machinery (recursive types and array emission) early and the purely
+front-end sugar last:
+
+1. **String-to-primitive conversions** (spec §7). No syntax work at all: the
+   binder legalizes `string → bool/i32/i64/f32/f64`, and the emitter calls
+   the invariant `T.Parse(string, NumberStyles, IFormatProvider)` /
+   `Boolean.Parse` — the exceptions they throw *are* the specified runtime
+   error, so no exception-handling regions and no new machinery. Warm-up
+   sized, and immediately useful.
+2. **Array core**: types, creation, indexing, `len`.
+   - `ArithType` grows a composed array type while keeping reference
+     equality: an interning cache maps element type → array type, so
+     structural equality (spec §3.1) stays pointer comparison.
+   - Lexer: `[` and `]` tokens. Parser: the `{ "[]" } primitive-type` type
+     production, array expressions (list and repeat forms), postfix index
+     chains, and multi-index assignment targets.
+   - Binder: the §7 structural expected-type propagation into element lists
+     and the repeat form; `len` as the second compiler-recognized builtin —
+     expression-valued, unlike `print`.
+   - Emitter: `newarr`/`ldlen` plus an element-kind dispatch for
+     `ldelem`/`stelem` (`.i4/.i8/.r4/.r8` for numerics, `.i1` for bool,
+     `.ref` for string *and* array elements — so the dispatch nested arrays
+     need is already paid for by `[]string`). Array-of-array element tokens
+     need the **TypeSpec** table (a signature blob per array type, cached) —
+     the one genuinely new metadata concept in v0.2. The repeat form lowers
+     to a small IL fill loop; the CLR provides bounds checks for free.
+3. **Array iteration and the entry point**: `for x in a` lowers to an index
+   loop over temps holding the array and its length (element loaded per
+   iteration, per spec §9.3); the entry-point bridge gains the
+   `main(args: []string)` variant, which passes the runtime's `string[]`
+   through without parsing or the usage path.
+4. **Interpolated strings** (spec §4.6). Front end only, by desugaring: the
+   parser produces the same concat-of-`string(…)` tree the equivalent `+`
+   expression would, so the binder and emitter change not at all. Lexing
+   strategy: the lexer scans an `f"…"` as one token recording its segment
+   spans (text runs and `${…}` holes, with brace/quote tracking inside
+   holes); the parser then runs the ordinary lexer+expression parser over
+   each hole span. That reuses the existing machinery instead of teaching
+   the main lexer a mode stack, at the cost of one re-lex per hole.
+5. **Hardening and release**: examples that need the new features (a
+   grid/matrix program, an `args`-driven CLI), the spec-coverage sweep,
+   docs/diagnostics.md rows for the new codes, CHANGELOG — then tag
+   `v0.2.0`.
+
+New diagnostics (codes assigned as each lands, registry order preserved):
+mixed or undeterminable array element types, an empty array literal with no
+expected type, indexing a non-array, `len` misuse, and — lexical — a bare
+`$` inside an interpolated string. String-conversion failures and array
+bounds/length faults are runtime errors, not diagnostics.
