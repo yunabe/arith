@@ -31,7 +31,7 @@ public sealed class SyntaxTree
     {
         DiagnosticBag diagnostics = new();
         ImmutableArray<Token> tokens = Lexer.Lex(text, diagnostics);
-        CompilationUnitSyntax root = Parser.Parse(tokens, diagnostics);
+        CompilationUnitSyntax root = Parser.Parse(text, tokens, diagnostics);
         return new SyntaxTree(text, root, diagnostics.ToImmutableArray());
     }
 }

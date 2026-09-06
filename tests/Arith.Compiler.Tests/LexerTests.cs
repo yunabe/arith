@@ -185,6 +185,12 @@ public sealed class LexerTests
     [InlineData("\"a\\", "ARITH1002", 0, 3)]
     [InlineData("\"a\\x1\"", "ARITH1003", 2, 2)]
     [InlineData("/* abc", "ARITH1004", 0, 6)]
+    [InlineData("f\"a $ b\"", "ARITH1006", 4, 1)] // Spec §4.6: a bare $ must open a hole or be escaped.
+    [InlineData("f\"a $x\"", "ARITH1006", 4, 1)]  // ($name shorthand is reserved, not supported.)
+    [InlineData("\"a\\$\"", "ARITH1003", 2, 2)]   // \$ is only an escape inside f-strings.
+    [InlineData("f\"abc", "ARITH1002", 0, 5)]
+    [InlineData("f\"${x", "ARITH1002", 0, 5)]     // An unterminated hole is an unterminated literal.
+    [InlineData("f\"a\\q\"", "ARITH1003", 3, 2)]
     [InlineData("10abc", "ARITH1005", 2, 3)]
     [InlineData("10f32", "ARITH1005", 2, 3)]
     [InlineData("1.5i64", "ARITH1005", 3, 3)]
@@ -198,6 +204,51 @@ public sealed class LexerTests
         Assert.Equal(expectedCode, diagnostic.Code);
         Assert.Equal(new TextSpan(expectedStart, expectedLength), diagnostic.Span);
         Assert.Contains(tokens, t => t.Kind == SyntaxKind.BadToken);
+    }
+
+    [Fact]
+    public void Lex_InterpolatedString_IsOneTokenRecordingItsSegments()
+    {
+        const string source = "f\"x = ${x}, y = ${y + 1}!\"";
+
+        ImmutableArray<Token> tokens = LexClean(source);
+
+        Token token = Assert.Single(tokens);
+        Assert.Equal(SyntaxKind.InterpolatedStringToken, token.Kind);
+        Assert.Equal(source, token.Text);
+        (string Text, bool IsHole)[] segments =
+            [.. token.Segments.Select(s => (source.Substring(s.Span.Start, s.Span.Length), s.IsHole))];
+        (string, bool)[] expected =
+            [("x = ", false), ("x", true), (", y = ", false), ("y + 1", true), ("!", false)];
+        Assert.Equal(expected, segments);
+    }
+
+    [Theory]
+    [InlineData("f\"\"", 0)]           // Empty literal: no segments at all.
+    [InlineData("f\"${a}\"", 1)]       // Hole only: no empty text runs around it.
+    [InlineData("f\"${a}${b}\"", 2)]   // ... nor between two holes.
+    public void Lex_InterpolatedString_ProducesNoEmptyTextSegments(string source, int expectedCount)
+    {
+        ImmutableArray<Token> tokens = LexClean(source);
+
+        Token token = Assert.Single(tokens);
+        Assert.Equal(expectedCount, token.Segments.Length);
+        Assert.All(token.Segments, s => Assert.True(s.IsHole));
+    }
+
+    [Fact]
+    public void Lex_NestedInterpolatedString_TracksQuotesInsideTheHole()
+    {
+        // The nested literal's quotes and braces must not end the outer
+        // hole early (design §7 brace/quote tracking).
+        const string source = "f\"${f\"${name + \"!\"}\"}\"";
+
+        ImmutableArray<Token> tokens = LexClean(source);
+
+        Token token = Assert.Single(tokens);
+        InterpolatedSegment hole = Assert.Single(token.Segments);
+        Assert.True(hole.IsHole);
+        Assert.Equal("f\"${name + \"!\"}\"", source.Substring(hole.Span.Start, hole.Span.Length));
     }
 
     [Fact]

@@ -27,6 +27,7 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH1003 | `invalid escape sequence '{0}'` | A backslash is followed by anything other than `n`, `r`, `t`, `"`, or `\` |
 | ARITH1004 | `unterminated block comment` | A `/*` comment reaches the end of the file |
 | ARITH1005 | `invalid suffix '{0}' on numeric literal` | A number is followed by letters that are not a matching type suffix (`10abc`, `10f32`, `1.5i64`) |
+| ARITH1006 | `a '$' in an interpolated string must start an interpolation hole or be escaped as '\$'` | A bare `$` appears in an `f"…"` string without `{` after it (`f"$x"`) |
 
 ## Syntax errors (ARITH2xxx)
 

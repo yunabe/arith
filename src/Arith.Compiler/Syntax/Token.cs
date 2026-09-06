@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 using Arith.Compiler.Text;
 
 namespace Arith.Compiler.Syntax;
@@ -14,5 +16,19 @@ namespace Arith.Compiler.Syntax;
 /// </summary>
 public readonly record struct Token(SyntaxKind Kind, TextSpan Span, string Text, bool IsMissing = false)
 {
+    /// <summary>
+    /// For an InterpolatedString token only: its text runs and `${…}` holes
+    /// in source order (design §7). The parser desugars the token from
+    /// these spans; every other token kind leaves this default.
+    /// </summary>
+    public ImmutableArray<InterpolatedSegment> Segments { get; init; }
+
     public override string ToString() => $"{Kind} {Span} \"{Text}\"{(IsMissing ? " (missing)" : "")}";
 }
+
+/// <summary>
+/// One piece of an interpolated string (spec §4.6): a raw text run (escapes
+/// still unresolved) or, when <see cref="IsHole"/> is set, the source span
+/// of a `${…}` hole's expression, exclusive of the delimiters.
+/// </summary>
+public readonly record struct InterpolatedSegment(TextSpan Span, bool IsHole);

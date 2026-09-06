@@ -78,6 +78,27 @@ public sealed class ParserTests
         Assert.Equal(expected, DumpExpression(expression));
     }
 
+    // Interpolated strings desugar in the parser to the equivalent
+    // concatenation of text segments and string(hole) conversions (spec
+    // §4.6), so the dumps below are the same trees the `+`-spelling
+    // produces.
+    [Theory]
+    [InlineData("f\"\"", "\"\"")]
+    [InlineData("f\"plain\"", "\"plain\"")]
+    [InlineData("f\"${x}\"", "(call string x)")]
+    [InlineData("f\"x = ${x}\"", "(+ \"x = \" (call string x))")]
+    [InlineData("f\"${a}end\"", "(+ (call string a) \"end\")")]
+    [InlineData("f\"${x}${y}\"", "(+ (call string x) (call string y))")]
+    [InlineData("f\"a${1 + 2}b\"", "(+ (+ \"a\" (call string (+ 1 2))) \"b\")")]
+    [InlineData("f\"n\\$${n}\\n\"", "(+ (+ \"n\\$\" (call string n)) \"\\n\")")]
+    [InlineData("f\"${name + \"!\"}\"", "(call string (+ name \"!\"))")] // A quoted string inside a hole.
+    [InlineData("f\"${f\"${x}\"}\"", "(call string (call string x))")]   // Nested interpolation.
+    [InlineData("f\"${a[0]}\"", "(call string (index a 0))")]
+    public void ParseInterpolatedString_DesugarsToConcatenation(string expression, string expected)
+    {
+        Assert.Equal(expected, DumpExpression(expression));
+    }
+
     [Theory]
     [InlineData("let x = 1;", "(let x 1)")]
     [InlineData("let limit: i32 = 10;", "(let limit : i32 10)")]
@@ -235,6 +256,35 @@ public sealed class ParserTests
         Assert.Equal("ARITH2004", diagnostic.Code);
         Assert.Equal(targetText, tree.Text.ToString(diagnostic.Span));
         Assert.IsType<ErrorStatementSyntax>(Assert.Single(Assert.Single(tree.Root.Functions).Body.Statements));
+    }
+
+    [Theory]
+    [InlineData("fn t() { let s = f\"${}\"; }", "(let s (call string (error)))")]
+    [InlineData("fn t() { let s = f\"${x y}\"; }", "(let s (call string x))")]
+    public void Parse_BrokenInterpolationHole_ReportsArith2001AndKeepsTheRest(
+        string source, string expectedDump)
+    {
+        SyntaxTree tree = Parse(source);
+
+        Diagnostic diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("ARITH2001", diagnostic.Code);
+        Assert.Equal(
+            expectedDump,
+            SyntaxDumper.Dump(Assert.Single(Assert.Single(tree.Root.Functions).Body.Statements)));
+    }
+
+    [Fact]
+    public void Parse_HoleDiagnostics_CarryRealSourcePositions()
+    {
+        // The hole is re-lexed in place (design §7), so a diagnostic inside
+        // it must point at the offending source, not at position 0 of some
+        // detached buffer.
+        const string source = "fn t() { let s = f\"${x y}\"; }";
+
+        SyntaxTree tree = Parse(source);
+
+        Diagnostic diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("y", tree.Text.ToString(diagnostic.Span));
     }
 
     [Fact]

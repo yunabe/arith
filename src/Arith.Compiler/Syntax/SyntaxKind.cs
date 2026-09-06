@@ -11,6 +11,7 @@ public enum SyntaxKind
     IntegerLiteralToken,
     FloatLiteralToken,
     StringLiteralToken,
+    InterpolatedStringToken,
     IdentifierToken,
 
     // Keywords (spec §2.2).
