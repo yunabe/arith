@@ -486,10 +486,13 @@ front-end sugar last:
    parser produces the same concat-of-`string(…)` tree the equivalent `+`
    expression would, so the binder and emitter change not at all. Lexing
    strategy: the lexer scans an `f"…"` as one token recording its segment
-   spans (text runs and `${…}` holes, with brace/quote tracking inside
-   holes); the parser then runs the ordinary lexer+expression parser over
-   each hole span. That reuses the existing machinery instead of teaching
-   the main lexer a mode stack, at the cost of one re-lex per hole.
+   spans (text runs and `${…}` holes; a hole's matching `}` is found by
+   tokenizing the rest of the line with a throwaway diagnostic bag, so
+   strings, block comments, and nested interpolations inside it skip as
+   whole units); the parser then runs the ordinary lexer+expression parser
+   over each hole span. That reuses the existing machinery instead of
+   teaching the main lexer a mode stack, at the cost of one extra lex per
+   hole.
 5. **Hardening and release**: examples that need the new features (a
    grid/matrix program, an `args`-driven CLI), the spec-coverage sweep,
    docs/diagnostics.md rows for the new codes, CHANGELOG — then tag

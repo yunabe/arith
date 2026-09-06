@@ -23,6 +23,9 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor InvalidNumericSuffix =
         new("ARITH1005", "invalid suffix '{0}' on numeric literal");
 
+    public static readonly DiagnosticDescriptor BareDollarInInterpolatedString =
+        new("ARITH1006", "a '$' in an interpolated string must start an interpolation hole or be escaped as '\\$'");
+
     // Syntax errors (ARITH2xxx).
     public static readonly DiagnosticDescriptor UnexpectedToken =
         new("ARITH2001", "unexpected {0}, expected {1}");

@@ -15,17 +15,29 @@ public sealed class Lexer
 {
     private readonly SourceText _text;
     private readonly DiagnosticBag _diagnostics;
+    private readonly int _end;
     private int _position;
 
-    private Lexer(SourceText text, DiagnosticBag diagnostics)
+    private Lexer(SourceText text, DiagnosticBag diagnostics, int start, int end)
     {
         _text = text;
         _diagnostics = diagnostics;
+        _position = start;
+        _end = end;
     }
 
-    public static ImmutableArray<Token> Lex(SourceText text, DiagnosticBag diagnostics)
+    public static ImmutableArray<Token> Lex(SourceText text, DiagnosticBag diagnostics) =>
+        LexRange(text, new TextSpan(0, text.Length), diagnostics);
+
+    /// <summary>
+    /// Lexes just the given range — used for the `${…}` holes of an
+    /// interpolated string (design §7), so hole tokens and diagnostics keep
+    /// their real source positions. The EndOfFile token sits at the range's
+    /// end.
+    /// </summary>
+    internal static ImmutableArray<Token> LexRange(SourceText text, TextSpan range, DiagnosticBag diagnostics)
     {
-        Lexer lexer = new(text, diagnostics);
+        Lexer lexer = new(text, diagnostics, range.Start, range.End);
         ImmutableArray<Token>.Builder tokens = ImmutableArray.CreateBuilder<Token>();
         Token token;
         do
@@ -37,7 +49,7 @@ public sealed class Lexer
         return tokens.ToImmutable();
     }
 
-    private bool AtEnd => _position >= _text.Length;
+    private bool AtEnd => _position >= _end;
 
     private char Current => Peek(0);
 
@@ -46,7 +58,7 @@ public sealed class Lexer
     private char Peek(int offset)
     {
         int index = _position + offset;
-        return index < _text.Length ? _text[index] : '\0';
+        return index < _end ? _text[index] : '\0';
     }
 
     /// <summary>
@@ -98,6 +110,7 @@ public sealed class Lexer
             return c switch
             {
                 '"' => LexString(),
+                'f' when Lookahead == '"' => LexInterpolatedString(),
                 >= '0' and <= '9' => LexNumber(),
                 (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or '_' => LexIdentifierOrKeyword(),
                 _ => LexOperatorOrUnexpected(),
@@ -160,7 +173,7 @@ public sealed class Lexer
                 {
                     _position += 2;
                 }
-                else if (_position + 1 >= _text.Length || Lookahead is '\n' or '\r')
+                else if (_position + 1 >= _end || Lookahead is '\n' or '\r')
                 {
                     // A lone backslash at the end of the line/file: the
                     // enclosing loop reports the unterminated string.
@@ -183,6 +196,148 @@ public sealed class Lexer
 
         SyntaxKind kind = hasError ? SyntaxKind.BadToken : SyntaxKind.StringLiteralToken;
         return MakeToken(kind, TextSpan.FromBounds(start, _position));
+    }
+
+    /// <summary>
+    /// Lexes an <c>f"…"</c> interpolated string (spec §4.6) as one token
+    /// whose Segments record the text runs and `${…}` hole spans; the
+    /// parser re-lexes each hole with <see cref="LexRange"/> and desugars
+    /// the whole token, so no later stage needs a new node kind (design
+    /// §7). Text runs follow the plain-string escape rules plus `\$`; a
+    /// bare `$` is a lexical error. A hole's matching `}` is found by
+    /// tokenizing (see <see cref="ScanHole"/>), so strings, block comments,
+    /// and nested interpolated strings inside it skip as whole units.
+    /// </summary>
+    private Token LexInterpolatedString()
+    {
+        int start = _position;
+        _position += 2; // f"
+        bool hasError = false;
+        ImmutableArray<InterpolatedSegment>.Builder segments =
+            ImmutableArray.CreateBuilder<InterpolatedSegment>();
+        int runStart = _position;
+
+        void FlushRun(int end)
+        {
+            if (end > runStart)
+            {
+                segments.Add(new InterpolatedSegment(TextSpan.FromBounds(runStart, end), IsHole: false));
+            }
+        }
+
+        while (true)
+        {
+            if (AtEnd || Current is '\n' or '\r')
+            {
+                _diagnostics.Report(ErrorCodes.UnterminatedStringLiteral, TextSpan.FromBounds(start, _position));
+                hasError = true;
+                FlushRun(_position);
+                break;
+            }
+
+            char c = Current;
+            if (c == '"')
+            {
+                FlushRun(_position);
+                _position++;
+                break;
+            }
+
+            if (c == '\\')
+            {
+                // The plain-string escapes (spec §4.4) plus \$ for a
+                // literal dollar sign (spec §4.6).
+                if (Lookahead is 'n' or 'r' or 't' or '"' or '\\' or '$')
+                {
+                    _position += 2;
+                }
+                else if (_position + 1 >= _end || Lookahead is '\n' or '\r')
+                {
+                    _position++; // The enclosing loop reports the unterminated string.
+                }
+                else
+                {
+                    TextSpan escapeSpan = new(_position, 2);
+                    _diagnostics.Report(
+                        ErrorCodes.InvalidEscapeSequence, escapeSpan, _text.ToString(escapeSpan));
+                    hasError = true;
+                    _position += 2;
+                }
+
+                continue;
+            }
+
+            if (c == '$')
+            {
+                if (Lookahead != '{')
+                {
+                    _diagnostics.Report(
+                        ErrorCodes.BareDollarInInterpolatedString, new TextSpan(_position, 1));
+                    hasError = true;
+                    _position++;
+                    continue;
+                }
+
+                FlushRun(_position);
+                _position += 2; // ${
+                if (!ScanHole(out TextSpan holeSpan))
+                {
+                    _diagnostics.Report(
+                        ErrorCodes.UnterminatedStringLiteral, TextSpan.FromBounds(start, _position));
+                    hasError = true;
+                    break;
+                }
+
+                segments.Add(new InterpolatedSegment(holeSpan, IsHole: true));
+                runStart = _position;
+                continue;
+            }
+
+            _position++;
+        }
+
+        TextSpan span = TextSpan.FromBounds(start, _position);
+        SyntaxKind kind = hasError ? SyntaxKind.BadToken : SyntaxKind.InterpolatedStringToken;
+        return new Token(kind, span, _text.ToString(span)) { Segments = segments.ToImmutable() };
+    }
+
+    /// <summary>
+    /// Finds the `}` matching an already-consumed `${` by tokenizing the
+    /// rest of the line — with a throwaway diagnostic bag, since the real
+    /// lexing and reporting happen when the parser re-lexes the hole — and
+    /// tracking brace-token depth. Tokenizing is what makes hole contents
+    /// scan correctly: a string, a block comment, or a nested interpolated
+    /// string is one skipped unit, so a `}` or `"` inside it cannot end
+    /// the hole early. False when the line (or range) ends first: the
+    /// hole, and with it the literal, is unterminated.
+    /// </summary>
+    private bool ScanHole(out TextSpan span)
+    {
+        int start = _position;
+        int lineEnd = _position;
+        while (lineEnd < _end && _text[lineEnd] is not ('\n' or '\r'))
+        {
+            lineEnd++;
+        }
+
+        int depth = 1;
+        foreach (Token token in LexRange(_text, TextSpan.FromBounds(start, lineEnd), new DiagnosticBag()))
+        {
+            if (token.Kind == SyntaxKind.OpenBraceToken)
+            {
+                depth++;
+            }
+            else if (token.Kind == SyntaxKind.CloseBraceToken && --depth == 0)
+            {
+                span = TextSpan.FromBounds(start, token.Span.Start);
+                _position = token.Span.End;
+                return true;
+            }
+        }
+
+        span = TextSpan.FromBounds(start, lineEnd);
+        _position = lineEnd;
+        return false;
     }
 
     /// <summary>

@@ -1185,6 +1185,7 @@ public sealed class Binder
                 't' => '\t',
                 '"' => '"',
                 '\\' => '\\',
+                '$' => '$', // Only in interpolated-string text segments (spec §4.6).
                 _ => throw new UnreachableException($"unhandled escape '\\{text[i]}'"),
             });
         }

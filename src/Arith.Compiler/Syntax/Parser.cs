@@ -19,6 +19,7 @@ namespace Arith.Compiler.Syntax;
 /// </summary>
 public sealed class Parser
 {
+    private readonly SourceText _text;
     private readonly ImmutableArray<Token> _tokens;
     private readonly DiagnosticBag _diagnostics;
     private int _position;
@@ -26,14 +27,16 @@ public sealed class Parser
     /// <summary>End of the last consumed token; node spans run from their first token to here.</summary>
     private int _lastEnd;
 
-    private Parser(ImmutableArray<Token> tokens, DiagnosticBag diagnostics)
+    private Parser(SourceText text, ImmutableArray<Token> tokens, DiagnosticBag diagnostics)
     {
+        _text = text;
         _tokens = tokens;
         _diagnostics = diagnostics;
     }
 
-    public static CompilationUnitSyntax Parse(ImmutableArray<Token> tokens, DiagnosticBag diagnostics) =>
-        new Parser(tokens, diagnostics).ParseCompilationUnit();
+    public static CompilationUnitSyntax Parse(
+        SourceText text, ImmutableArray<Token> tokens, DiagnosticBag diagnostics) =>
+        new Parser(text, tokens, diagnostics).ParseCompilationUnit();
 
     private Token Current => Peek(0);
 
@@ -414,6 +417,7 @@ public sealed class Parser
         SyntaxFacts.IsTypeKeyword(kind) || kind is
             SyntaxKind.IdentifierToken or SyntaxKind.IntegerLiteralToken or
             SyntaxKind.FloatLiteralToken or SyntaxKind.StringLiteralToken or
+            SyntaxKind.InterpolatedStringToken or
             SyntaxKind.TrueKeyword or SyntaxKind.FalseKeyword or
             SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or
             SyntaxKind.MinusToken or SyntaxKind.BangToken;
@@ -516,6 +520,9 @@ public sealed class Parser
                 return new LiteralExpressionSyntax(literal, literal.Span);
             }
 
+            case SyntaxKind.InterpolatedStringToken:
+                return ParseInterpolatedString();
+
             case SyntaxKind.IdentifierToken when Peek(1).Kind == SyntaxKind.OpenParenToken:
                 return ParseCallExpression();
             case SyntaxKind.IdentifierToken:
@@ -567,6 +574,77 @@ public sealed class Parser
         }
 
         return new ErrorExpressionSyntax(span);
+    }
+
+    // interpolated-string = 'f"' , { text | escape | "${" , expression , "}" } , '"' ;
+    //
+    // Desugared right here to the equivalent concatenation of text segments
+    // and string(hole) conversions (spec §4.6: f"x = ${x}" is exactly
+    // "x = " + string(x)), so the binder and emitter see no new node kind
+    // (design §7). The operator and callee tokens are synthesized with
+    // zero-width spans; the segment spans keep real source positions.
+    private ExpressionSyntax ParseInterpolatedString()
+    {
+        Token token = Consume();
+        ExpressionSyntax? result = null;
+        foreach (InterpolatedSegment segment in token.Segments)
+        {
+            ExpressionSyntax piece;
+            if (segment.IsHole)
+            {
+                ExpressionSyntax hole = ParseHoleExpression(segment.Span);
+                Token callee = new(SyntaxKind.StringKeyword, new TextSpan(segment.Span.Start, 0), "string");
+                piece = new CallExpressionSyntax(callee, [hole], segment.Span);
+            }
+            else
+            {
+                // A synthetic quoted literal; the raw text keeps its
+                // escapes for the binder's unescaping (\$ included).
+                Token literal = new(
+                    SyntaxKind.StringLiteralToken, segment.Span,
+                    "\"" + _text.ToString(segment.Span) + "\"");
+                piece = new LiteralExpressionSyntax(literal, segment.Span);
+            }
+
+            result = result is null
+                ? piece
+                : new BinaryExpressionSyntax(
+                    result,
+                    new Token(SyntaxKind.PlusToken, new TextSpan(piece.Span.Start, 0), "+"),
+                    piece,
+                    TextSpan.FromBounds(token.Span.Start, segment.Span.End));
+        }
+
+        // f"" is the empty string.
+        return result ?? new LiteralExpressionSyntax(
+            new Token(SyntaxKind.StringLiteralToken, token.Span, "\"\""), token.Span);
+    }
+
+    /// <summary>
+    /// Re-lexes and parses one `${…}` hole in place, so tokens and
+    /// diagnostics carry real source positions; trailing tokens inside the
+    /// hole are a syntax error.
+    /// </summary>
+    private ExpressionSyntax ParseHoleExpression(TextSpan span)
+    {
+        ImmutableArray<Token> tokens = Lexer.LexRange(_text, span, _diagnostics);
+        Parser parser = new(_text, tokens, _diagnostics);
+        ExpressionSyntax expression = parser.ParseExpression();
+
+        // A trailing Bad token was already reported by the lexer; drop the
+        // run without a second diagnostic (cascade suppression), as
+        // MatchToken does.
+        while (parser.Current.Kind == SyntaxKind.BadToken)
+        {
+            parser.Consume();
+        }
+
+        if (parser.Current.Kind != SyntaxKind.EndOfFileToken)
+        {
+            parser.ReportUnexpected("the end of the interpolation hole");
+        }
+
+        return expression;
     }
 
     // array-expression = "[" , [ expression , { "," , expression } ] , "]"

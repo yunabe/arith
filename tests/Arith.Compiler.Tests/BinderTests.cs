@@ -749,6 +749,29 @@ public sealed class BinderTests
         Assert.Equal(count, compilation.Diagnostics.Length);
     }
 
+    // ---- Interpolated strings (spec §4.6) -------------------------------
+
+    [Theory]
+    [InlineData("let s = f\"\";")]
+    [InlineData("let s = f\"n = ${1 + 2}\";")]
+    [InlineData("let s = f\"${true} ${1.5f32} ${\"txt\"}\";")] // Any primitive hole type.
+    [InlineData("let s = f\"${f\"${1}\"}\";")]
+    public void InterpolatedString_BindsAsString(string letStatement)
+    {
+        Assert.Equal("string", LetType(letStatement));
+    }
+
+    [Theory]
+    [InlineData("print(f\"${print(1)}\");", "ARITH3017")]        // A hole needs a value.
+    [InlineData("let a = [1]; let s = f\"${a}\";", "ARITH3020")] // string([]i64) does not exist.
+    [InlineData("let s = f\"${missing}\";", "ARITH3005")]
+    public void InvalidInterpolationHole_ReportsTheSpecifiedCode(string body, string expectedCode)
+    {
+        Compilation compilation = CompileMain(body);
+
+        Assert.Contains(expectedCode, Codes(compilation));
+    }
+
     // ---- Array iteration (spec §9.3) ------------------------------------
 
     [Theory]

@@ -596,6 +596,53 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_InterpolatedStrings_PrintTheEquivalentConcatenation()
+    {
+        // Spec §4.6: f"…${e}…" is exactly the concatenation of its text
+        // segments and string(e) conversions — invariant numeric formatting
+        // and the bool spellings included.
+        string source = WriteSource("fstrings.arith", """
+            fn label(n: i64) -> string {
+                return f"#${n}";
+            }
+
+            fn main() {
+                let x = 6;
+                let y = 7;
+                print(f"${x} * ${y} = ${x * y}");
+                print(f"" + "|");
+                print(f"plain");
+                print(f"cost: \$${2.5} (${true})");
+                print(f"${label(1) + "!"}");
+                print(f"nested: ${f"[${x}]"}");
+                print(f"${1 /* } */ + 2}");
+                let names = ["a", "b"];
+                for i in 0..len(names) {
+                    print(f"${i}: ${names[i]}");
+                }
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        string[] expected =
+        [
+            "6 * 7 = 42",
+            "|",
+            "plain",
+            "cost: $2.5 (true)",
+            "#1!",
+            "nested: [6]",
+            "3",
+            "0: a",
+            "1: b",
+        ];
+        Assert.Equal(expected, Lines(result.Output));
+    }
+
+    [Fact]
     public void Run_StringArrayMain_ReceivesAllArgumentsVerbatim()
     {
         // Spec §5.1: `main(args: []string)` receives every argument
