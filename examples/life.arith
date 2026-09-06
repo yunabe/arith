@@ -1,0 +1,87 @@
+// Conway's Game of Life on a finite board. The two-dimensional board is a
+// jagged [][]bool array. A repeated row would alias, so make_grid replaces
+// every slot with a fresh row before the board is used.
+fn make_grid(width: i64, height: i64) -> [][]bool {
+    let grid = [[false; width]; height];
+    for y in 0..height {
+        grid[y] = [false; width];
+    }
+    return grid;
+}
+
+fn neighbor_count(grid: [][]bool, x: i64, y: i64) -> i64 {
+    let height = len(grid);
+    let width = len(grid[0]);
+    let count = 0;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            if dx != 0 || dy != 0 {
+                let nx = x + dx;
+                let ny = y + dy;
+                if nx >= 0 && nx < width && ny >= 0 && ny < height && grid[ny][nx] {
+                    count += 1;
+                }
+            }
+        }
+    }
+    return count;
+}
+
+fn next_generation(grid: [][]bool) -> [][]bool {
+    let height = len(grid);
+    let width = len(grid[0]);
+    let next = make_grid(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let neighbors = neighbor_count(grid, x, y);
+            next[y][x] = neighbors == 3 || (grid[y][x] && neighbors == 2);
+        }
+    }
+    return next;
+}
+
+fn print_grid(grid: [][]bool) {
+    for y in 0..len(grid) {
+        let row = "";
+        for x in 0..len(grid[y]) {
+            if grid[y][x] {
+                row += "#";
+            } else {
+                row += ".";
+            }
+        }
+        print(row);
+    }
+}
+
+fn population(grid: [][]bool) -> i64 {
+    let count = 0;
+    for y in 0..len(grid) {
+        for x in 0..len(grid[y]) {
+            if grid[y][x] {
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
+fn main() {
+    let grid = make_grid(8, 8);
+
+    // A glider moves one cell down and right every four generations.
+    grid[1][2] = true;
+    grid[2][3] = true;
+    grid[3][1] = true;
+    grid[3][2] = true;
+    grid[3][3] = true;
+
+    for generation in 0..=4 {
+        print("generation " + string(generation));
+        print_grid(grid);
+        if generation < 4 {
+            grid = next_generation(grid);
+        }
+    }
+    print("population after 4 generations = " + string(population(grid)));
+}

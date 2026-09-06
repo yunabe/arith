@@ -15,7 +15,8 @@ The goal of this project is to explore the fundamental stages of a compiler—le
 > [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) on `main` now drafts language v0.2
 > (arrays, `main(args: []string)`, string conversions, `f"..."`
 > interpolation), whose implementation is under way — string-to-primitive
-> conversions work; arrays and interpolation do not yet. The v0.1
+> conversions and the array core work; array iteration, `main(args:
+> []string)`, and interpolation do not yet. The v0.1
 > specification is preserved at the `v0.1.0` tag.
 
 ## Example

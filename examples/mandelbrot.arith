@@ -1,5 +1,6 @@
 // Renders the Mandelbrot set as ASCII art: nested loops, f64 arithmetic,
-// and building each row by string concatenation (Arith has no arrays yet).
+// and building each row by string concatenation. It predates v0.2 arrays and
+// remains a useful contrast: strings are the natural output buffer here.
 // A point c is in the set when z = z*z + c stays bounded; the escape
 // iteration count picks the character.
 fn shade(iterations: i64, limit: i64) -> string {
