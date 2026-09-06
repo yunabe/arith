@@ -184,6 +184,7 @@ Element-list form `[e1, e2, …, en]`:
 Repeat form `[value; count]`:
 
 - `value` is evaluated once and every element is initialized to that one result.
+- When an expected array type `[]T` is available (Section 7), `value` takes `T` as its expected type and must have type `T`, so `let xs: []i32 = [0; n];` creates an `[]i32`. Without one, `value` is typed on its own and its type becomes the element type.
 - `count` must have type `i64` (an expected type for unsuffixed literals) and is evaluated once, after `value`. A negative `count` is a runtime error; zero is allowed.
 - Because arrays are reference values, a repeat whose element is an array shares **one** array across every slot: after `let grid = [[0; 3]; 2];`, `grid[0]` and `grid[1]` are the same array, and `grid[0][0] = 7;` is visible as `grid[1][0]`. To create independent rows, fill the outer array in a loop:
 
@@ -301,6 +302,8 @@ Arith does not perform implicit conversions between distinct numeric types. The 
 
 An expected type may come from a type-annotated initializer, an assignment, a `return` statement, a function parameter, or the other operand of a binary operator. An expected type only applies to a literal of the same numeric category: an expected integer type affects only integer literals, and an expected floating-point type affects only floating-point literals. The default literal type is used when a unique expected type cannot be determined.
 
+An expected **array** type applies to array creation expressions (Section 4.5), structurally and recursively: when an array expression's expected type is `[]T`, each element of the element-list form and the `value` of the repeat form take `T` as their expected type (the repeat form's `count` always has expected type `i64`). So `let xs: []i32 = [0; n];` creates an `[]i32`, and `let grid: [][]i32 = [[1], [2]];` types the inner literals as `[]i32` and their elements as `i32`. An expected type that is not an array type does not apply to an array expression, and an expected array type reaches literals only through this element propagation.
+
 The target type of an explicit conversion does not provide an expected type to its operand. The operand is typed on its own — using the default literal type if nothing else determines it — and the conversion is then applied to that value. For example, `i32(3000000000)` converts the `i64` value `3000000000` to `i32` and therefore produces a runtime error, and `f64(1)` converts the `i64` value `1` to `f64`.
 
 A type name acts as a built-in conversion function for explicit numeric conversions.
@@ -330,7 +333,7 @@ Any primitive value may be converted to a string with `string(value)`; the forma
 - Non-finite floating-point values convert to `"NaN"`, `"Infinity"`, and `"-Infinity"`.
 - A `string` converts to itself.
 
-A `string` may be converted to any other primitive type. The text is parsed with exactly the grammar of a `main` argument of that type (Section 5.1): culture-invariant, optional sign and exponent for numerics, finite values only, case-insensitive `true`/`false` for `bool`, surrounding white space ignored. A string that fails to parse is a **runtime error** — consistent with the other checked conversions in this section — so `i64("12")` is `12` and `i64(string(x)) == x` holds for every integer `x`, while `i64("12.5")` and `bool("yes")` fail at runtime:
+A `string` may be converted to any other primitive type. The text is parsed with exactly the grammar of a `main` argument of that type (Section 5.1): culture-invariant, an optional sign for numerics, an optional exponent for floating-point values only, finite values only, case-insensitive `true`/`false` for `bool`, surrounding white space ignored. A string that fails to parse is a **runtime error** — consistent with the other checked conversions in this section — so `i64("12")` is `12` and `i64(string(x)) == x` holds for every `i64` value `x`, while `i64("12.5")`, `i64("1e2")`, and `bool("yes")` fail at runtime:
 
 ```arith
 fn main(args: []string) {
