@@ -77,19 +77,22 @@ arith build hello.arith --aot        # compile into a single native executable
 arith run hello.arith [args...]      # compile and run, forwarding the exit code
 ```
 
-A `main` with parameters receives command-line arguments, parsed per parameter
-type before it runs ([LANGUAGE_SPEC.md §5.1](LANGUAGE_SPEC.md)); on a wrong
-argument count or an unparsable value the program prints a usage line and
-exits with code 2. With `arith run`, put `--` before values that start with
-`-`:
+A `main` may take command-line arguments in one of two forms
+([LANGUAGE_SPEC.md §5.1](LANGUAGE_SPEC.md)). With **primitive parameters**,
+the program takes exactly one argument per parameter, each parsed to that
+parameter's type before `main` runs; a wrong argument count or an unparsable
+value prints a usage line and exits with code 2. With **`main(args:
+[]string)`** — a single parameter, and the only array type `main` accepts —
+the program takes any number of arguments and receives them verbatim, with no
+parsing and no usage path; it converts them itself as needed
+(`examples/calc.arith` does). With `arith run`, put `--` before values that
+start with `-`:
 
 ```console
 arith run greet.arith 3 hello        # fn main(count: i64, label: string)
+arith run calc.arith sum 1 2 3       # fn main(args: []string)
 arith run negate.arith -- -5
 ```
-
-Alternatively, `fn main(args: []string)` receives every argument verbatim —
-any count, no parsing, no usage exit (`examples/calc.arith` uses this form).
 
 The source file must be named `<program-name>.arith`, where `<program-name>`
 starts with a letter or `_` and contains only letters, digits, `_`, and `-`
