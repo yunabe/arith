@@ -177,6 +177,11 @@ public sealed class BinderTests
     [InlineData("let x = string(1);", "string")]
     [InlineData("let x = string(true);", "string")]
     [InlineData("let x = string(\"s\");", "string")]
+    [InlineData("let x = i64(\"12\");", "i64")]           // Spec v0.2 §7: string parses to any primitive.
+    [InlineData("let x = i32(\"-5\");", "i32")]
+    [InlineData("let x = f64(\"1.5\");", "f64")]
+    [InlineData("let x = f32(\"0.5\");", "f32")]
+    [InlineData("let x = bool(\"true\");", "bool")]
     [InlineData("let x = \"a\" + \"b\";", "string")]    // `+` concatenates strings (spec §8.1).
     public void ConversionAndConcatenation_ProduceTheTargetType(string letStatement, string expectedType)
     {
@@ -203,7 +208,7 @@ public sealed class BinderTests
     [InlineData("let x = bool(1);", "ARITH3020")]        // bool is not convertible (spec §7).
     [InlineData("let x = bool(true);", "ARITH3020")]
     [InlineData("let x = i32(true);", "ARITH3020")]
-    [InlineData("let x = f64(\"1.5\");", "ARITH3020")]   // string-to-anything is unsupported.
+    [InlineData("let x = bool(0);", "ARITH3020")]        // bool converts only to/from string.
     [InlineData("let x = i64();", "ARITH3008")]
     [InlineData("let x = i64(1, 2);", "ARITH3008")]
     [InlineData("let s = \"a\" + 1;", "ARITH3010")]      // Concatenation needs two strings.

@@ -702,7 +702,9 @@ public sealed class Binder
     /// type: the operand is typed on its own — literal defaults included, so
     /// i32(3000000000) is an i64 value whose narrowing faults at runtime —
     /// and then the conversion pair is validated: any numeric to any
-    /// numeric, and any primitive to string. bool is not convertible.
+    /// numeric, any primitive to string, and string to any primitive
+    /// (parsed at runtime; failure is a runtime error). bool converts only
+    /// to and from string.
     /// </summary>
     private BoundExpression BindConversionExpression(CallExpressionSyntax syntax)
     {
@@ -736,7 +738,9 @@ public sealed class Binder
             return new BoundErrorExpression();
         }
 
-        bool valid = (target.IsNumeric && operand.Type.IsNumeric) || target == ArithType.String;
+        bool valid = (target.IsNumeric && operand.Type.IsNumeric)
+            || target == ArithType.String
+            || operand.Type == ArithType.String;
         if (!valid)
         {
             _diagnostics.Report(ErrorCodes.InvalidConversion, syntax.Span, operand.Type, target);

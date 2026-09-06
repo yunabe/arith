@@ -36,7 +36,10 @@ public sealed class Emitter
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantToString = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantTryParse = [];
+    private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantParse = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _isFinite = [];
+    private MemberReferenceHandle _booleanParse;
+    private MemberReferenceHandle _formatExceptionCtor;
     private MemberReferenceHandle _consoleWriteLineString;
     private MemberReferenceHandle _cultureGetInvariant;
     private MemberReferenceHandle _stringEquals;
@@ -253,6 +256,22 @@ public sealed class Emitter
                     parameterCount: 1,
                     parameters: p => p.AddParameter().Type().Type(formatProvider, isValueType: false)));
 
+            // string(T) conversions (spec §7) parse with the invariant
+            // culture and fail with the exception Parse throws.
+            _invariantParse[type] = _metadata.AddMemberReference(
+                typeReference,
+                _metadata.GetOrAddString("Parse"),
+                MethodSignature(
+                    isInstanceMethod: false,
+                    returnType: r => EncodeType(r.Type(), type),
+                    parameterCount: 3,
+                    parameters: p =>
+                    {
+                        p.AddParameter().Type().String();
+                        p.AddParameter().Type().Type(numberStyles, isValueType: true);
+                        p.AddParameter().Type().Type(formatProvider, isValueType: false);
+                    }));
+
             // The entry-point bridge parses command-line arguments with the
             // invariant culture (spec §5.1): TryParse avoids exception
             // handling regions in the generated IL entirely.
@@ -299,6 +318,27 @@ public sealed class Emitter
                     p.AddParameter().Type().String();
                     p.AddParameter().Type(isByRef: true).Boolean();
                 }));
+        _booleanParse = _metadata.AddMemberReference(
+            booleanType,
+            _metadata.GetOrAddString("Parse"),
+            MethodSignature(
+                isInstanceMethod: false,
+                returnType: r => r.Type().Boolean(),
+                parameterCount: 1,
+                parameters: p => p.AddParameter().Type().String()));
+
+        // Thrown by string-to-float conversions whose parse result is not
+        // finite (spec §7): .NET's Parse happily returns infinity for an
+        // overflowing exponent and accepts the Infinity/NaN spellings.
+        TypeReferenceHandle formatException = AddTypeReference(systemRuntime, "System", "FormatException");
+        _formatExceptionCtor = _metadata.AddMemberReference(
+            formatException,
+            _metadata.GetOrAddString(".ctor"),
+            MethodSignature(
+                isInstanceMethod: true,
+                returnType: r => r.Void(),
+                parameterCount: 1,
+                parameters: p => p.AddParameter().Type().String()));
 
         TypeReferenceHandle textWriter = AddTypeReference(systemRuntime, "System.IO", "TextWriter");
         _consoleGetError = _metadata.AddMemberReference(
@@ -998,6 +1038,12 @@ public sealed class Emitter
                 return;
             }
 
+            if (from == ArithType.String)
+            {
+                EmitParseString(to);
+                return;
+            }
+
             ILOpCode opCode;
             if (to == ArithType.I32)
             {
@@ -1021,6 +1067,49 @@ public sealed class Emitter
             }
 
             _il.OpCode(opCode);
+        }
+
+        /// <summary>
+        /// Converts the string on the stack to a primitive (spec §7) with
+        /// the invariant Parse; the exception it throws on bad input is the
+        /// specified runtime error. A float result is additionally checked
+        /// with IsFinite — .NET's Parse returns infinity for an overflowing
+        /// exponent and accepts the Infinity/NaN spellings — and a
+        /// FormatException is thrown explicitly (no exception-handling
+        /// regions are needed for a throw).
+        /// </summary>
+        private void EmitParseString(ArithType to)
+        {
+            if (to == ArithType.Bool)
+            {
+                _il.Call(_emitter._booleanParse);
+                return; // One value in, one out.
+            }
+
+            _il.LoadConstantI4(to.IsInteger ? NumberStylesInteger : NumberStylesFloat);
+            Push();
+            _il.Call(_emitter._cultureGetInvariant);
+            Push();
+            _il.Call(_emitter._invariantParse[to]);
+            Pop(3);
+            Push();
+            if (to.IsFloat)
+            {
+                LabelHandle finite = _il.DefineLabel();
+                _il.OpCode(ILOpCode.Dup);
+                Push();
+                _il.Call(_emitter._isFinite[to]);
+                _il.Branch(ILOpCode.Brtrue, finite);
+                Pop();
+                _il.LoadString(_emitter._metadata.GetOrAddUserString(
+                    $"The string does not represent a finite {to} value."));
+                Push();
+                _il.OpCode(ILOpCode.Newobj);
+                _il.Token(_emitter._formatExceptionCtor);
+                _il.OpCode(ILOpCode.Throw);
+                Pop();
+                _il.MarkLabel(finite);
+            }
         }
 
         /// <summary>Spec §11: integer add/sub/mul are checked; div/rem fault at runtime on their own.</summary>
