@@ -177,6 +177,29 @@ public sealed class ArrayProgramTests : IDisposable
     }
 
     [Fact]
+    public void Run_RepeatForm_EvaluatesValueOnceThenCount()
+    {
+        // Spec §4.5: the value is evaluated once, the count once, after it.
+        string source = WriteSource("repeat-order.arith", """
+            fn note(label: string, v: i64) -> i64 {
+                print(label);
+                return v;
+            }
+
+            fn main() {
+                let a = [note("value", 7); note("count", 2)];
+                print(a[0] + a[1]);
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["value", "count", "14"], Lines(result.Output));
+    }
+
+    [Fact]
     public void Run_ForEach_VisitsElementsInOrderWithControlFlow()
     {
         // Spec §9.3: elements visit in index order, the element is read when

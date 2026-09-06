@@ -1,4 +1,4 @@
-# Arith compiler design (v0.1)
+# Arith compiler design
 
 This document describes the architecture of the Arith compiler: how the code
 is organized into projects, what the pipeline stages are, which data
@@ -11,7 +11,7 @@ defines *how*. The IL-emission techniques it builds on are described in
 
 ## 1. Goals and constraints
 
-- Compile Arith v0.1 source files to .NET assemblies (`arith build`) and run
+- Compile Arith source files to .NET assemblies (`arith build`) and run
   them (`arith run`), matching the CLI sketched in the README.
 - Keep the classic stages — lexing, parsing, name resolution / type checking,
   IL generation — as separate, individually testable components.
@@ -424,6 +424,9 @@ Steps 4–7 each extend binder + emitter + tests together, keeping the compiler
 runnable at every step.
 
 ## 7. Version 0.2 plan
+
+*(Written before the v0.2 work and kept as its as-built record; every step
+below is implemented and released as v0.2.0.)*
 
 Language v0.2 (LANGUAGE_SPEC.md: arrays, `main(args: []string)`, string
 conversions, interpolated strings) extends the same architecture — no new

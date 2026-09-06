@@ -26,6 +26,10 @@ public sealed class ExampleProgramsTests
     [InlineData("collatz.arith", new[] { "27" }, "collatz(27) reaches 1 after 111 steps")]
     [InlineData("pow.arith", new[] { "3", "13" }, "3^13 = 1594323")]
     [InlineData("pi.arith", new[] { "1000" }, "pi ~= 3.141592653340544  (1000 terms)")]
+    [InlineData("calc.arith", new[] { "sum", "1", "2", "3", "4" }, "sum of 4 numbers = 10")]
+    [InlineData("calc.arith", new[] { "prod", "2", "3", "7" }, "prod of 3 numbers = 42")]
+    [InlineData("calc.arith", new[] { "max", "3", "9", "4" }, "max of 3 numbers = 9")]
+    [InlineData("matmul.arith", new string[0], "| 139 154 |")]
     public void Example_ProducesItsDocumentedFinalLine(string name, string[] arguments, string expectedLastLine)
     {
         CliResult result = CliRunner.Run(["run", ExamplePath(name), .. arguments]);

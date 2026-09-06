@@ -1,6 +1,6 @@
 # Arith examples
 
-Small programs showing what language v0.1 can express — and what the
+Small programs showing what the Arith language can express — and what the
 generated code actually does at runtime. Run any of them with:
 
 ```console
@@ -22,6 +22,8 @@ compile and produce the outputs shown here.
 | `pow.arith` | `pow.arith 3 13` → `3^13 = 1594323` | Exponentiation by squaring via `/ 2` and `% 2` (no bitwise ops needed) |
 | `pi.arith` | `pi.arith 1000` → `pi ~= 3.141592653340544 …` | Nilakantha series; invariant float output |
 | `mandelbrot.arith` | `mandelbrot.arith` | ASCII Mandelbrot: nested loops, `f64`, building rows by string concatenation |
+| `calc.arith` | `calc.arith sum 1 2 3 4` → `sum of 4 numbers = 10` | **v0.2**: `main(args: []string)`, `i64(string)` conversions, f-strings |
+| `matmul.arith` | `matmul.arith` → `… \| 139 154 \|` | **v0.2**: jagged `[][]i64` matrices, the §4.5 fill-in-a-loop idiom, `for` over arrays |
 
 ## The tail-call experiment (`tailsum.arith`)
 

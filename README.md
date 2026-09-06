@@ -9,14 +9,12 @@ Rather than interpreting expressions one at a time, Arith type-checks the source
 The goal of this project is to explore the fundamental stages of a compiler—lexing, parsing, type checking, and code generation—through a small, approachable language.
 
 > [!NOTE]
-> The compiler implements all of language v0.1, released as
-> [v0.1.0](https://github.com/yunabe/arith/releases/tag/v0.1.0) (architecture
-> in [docs/compiler-design.md](docs/compiler-design.md)).
-> [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) on `main` now drafts language v0.2
-> (arrays, `main(args: []string)`, string conversions, `f"..."`
-> interpolation), whose implementation is under way — string-to-primitive
-> conversions work; arrays and interpolation do not yet. The v0.1
-> specification is preserved at the `v0.1.0` tag.
+> The compiler implements all of language v0.2 — arrays, `main(args:
+> []string)`, string conversions, and `f"..."` interpolation on top of v0.1
+> — as defined by [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) (architecture in
+> [docs/compiler-design.md](docs/compiler-design.md)). Earlier versions are
+> preserved at their git tags:
+> [v0.1.0](https://github.com/yunabe/arith/releases/tag/v0.1.0).
 
 ## Example
 
@@ -53,17 +51,22 @@ large:
 55
 ```
 
-## Version 0.1 features
+## Version 0.2 features
 
 - Primitive `bool`, `i32`, `i64`, `f32`, `f64`, and `string` types
+- Array types `[]T` (nesting included), with literals, a `[value; count]`
+  repeat form, indexing, element assignment, and the built-in `len`
 - Functions declared with `fn`, with support for `return`
 - Local variables declared with `let`, including reassignment
 - Arithmetic, comparison, and logical operators
-- `if` / `else`, `while`, and range-based `for` statements
+- `if` / `else`, `while`, and `for` over ranges and arrays
 - `break` and `continue`
 - A built-in `print` function that prints one value per line
-- Typed `main` parameters that receive parsed command-line arguments
-- Explicit numeric conversions
+- Interpolated strings: `f"x = ${x}"`
+- Typed `main` parameters that receive parsed command-line arguments, or
+  `main(args: []string)` receiving all of them verbatim
+- Explicit conversions between primitive types, `string(x)` and
+  `i64("42")` included
 - Checked integer arithmetic
 - Generation of a .NET assembly with `main` as its entry point
 
@@ -143,7 +146,7 @@ dotnet run --project src/Arith.Cli -- version  # run the CLI
 The `version` command prints the CLI version:
 
 ```text
-0.1.0
+0.2.0
 ```
 
 The repository is laid out as follows:
@@ -161,9 +164,10 @@ The repository is laid out as follows:
 All stages of the original roadmap — lexer, parser, name resolution and type
 checking, IL generation for expressions and control flow, assembly emission
 and execution, and diagnostics with test coverage — are implemented; language
-v0.1 is complete.
+v0.2 (arrays, array iteration, `main(args: []string)`, string conversions,
+and interpolated strings) is complete.
 
-Arrays, structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.1 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)). Released versions are recorded in [CHANGELOG.md](CHANGELOG.md).
+Structs, classes, closures, generics, modules, and `null` are outside the scope of version 0.2 and are candidates for future versions ([LANGUAGE_SPEC.md §13](LANGUAGE_SPEC.md)). Released versions are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

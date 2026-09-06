@@ -1,14 +1,10 @@
 # Arith Language Specification
 
 This document defines version 0.2 of the Arith programming language.
-
-> [!NOTE]
-> **Status: draft.** Version 0.2 is not implemented yet; the latest released
-> language version is 0.1 (git tag `v0.1.0` holds its specification and
-> compiler). Version 0.2 adds, on top of 0.1: array types `[]T` with
-> literals, indexing, and `len`; `for` over arrays; `fn main(args:
-> []string)`; conversions from `string` to the other primitive types; and
-> interpolated `f"..."` strings.
+Version 0.2 adds, on top of 0.1: array types `[]T` with literals, indexing,
+and `len`; `for` over arrays; `fn main(args: []string)`; conversions from
+`string` to the other primitive types; and interpolated `f"..."` strings.
+The version 0.1 specification is preserved at the git tag `v0.1.0`.
 
 ## 1. General rules
 
