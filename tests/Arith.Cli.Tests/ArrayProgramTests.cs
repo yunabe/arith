@@ -121,6 +121,36 @@ public sealed class ArrayProgramTests : IDisposable
     }
 
     [Fact]
+    public void Run_CallRootedElementWrite_MutatesTheReturnedArray()
+    {
+        // Spec §8.4: an assignment target may be rooted at any postfix
+        // expression; a write through a call result reaches the array the
+        // call returned, while a write into a fresh literal is legal but
+        // unobservable.
+        string source = WriteSource("call-rooted.arith", """
+            fn identity(values: []i64) -> []i64 {
+                return values;
+            }
+
+            fn main() {
+                let a = [1, 2];
+                identity(a)[0] = 9;
+                identity(a)[1] += 5;
+                print(a[0]);
+                print(a[1]);
+                [1, 2][0] = 42;
+                print("done");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["9", "7", "done"], Lines(result.Output));
+    }
+
+    [Fact]
     public void Run_NestedArrays_AreIndependentJaggedRows()
     {
         string source = WriteSource("jagged.arith", """

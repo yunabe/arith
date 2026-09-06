@@ -397,13 +397,15 @@ Logical operators accept only `bool` values. `&&` and `||` use short-circuit eva
 
 Except that the left-hand side is evaluated only once, a compound assignment is equivalent to the corresponding binary operation followed by a regular assignment. Assignments and compound assignments are statements and do not produce values.
 
-The target of an assignment is a variable name or an element of an array-typed variable:
+The target of an assignment is a variable name or an element of an array-typed expression. Any index expression works as a target — the chain may be rooted at a variable, a call result, or even a fresh array creation, since an element write goes through the array reference the root evaluates to (Section 3.1):
 
 ```arith
 counts[i] += 1;
+grid[i][j] = 0;
+rows()[0][k] = 1;   // writes through the returned reference
 ```
 
-For an element target `name[i1][i2]…[in]`, the variable and the indexes are evaluated left to right before the right-hand side, and — as for every index expression — each index must be in range at the time of the access (Section 8.6).
+For an element target `a[i1][i2]…[in]`, the root expression and the indexes are evaluated left to right before the right-hand side, and — as for every index expression — each index must be in range at the time of the access (Section 8.6). A write through an array nothing else references (`[1, 2][0] = 9;`) is allowed but has no observable effect.
 
 ### 8.5 Precedence
 
@@ -562,7 +564,8 @@ assignment-statement
                  = assignment-target , ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) ,
                    expression , ";" ;
 assignment-target
-                 = identifier , { "[" , expression , "]" } ;
+                 = identifier
+                 | primary , "[" , expression , "]" , { "[" , expression , "]" } ;
 expression-statement
                  = call-expression , ";" ;
 return-statement = "return" , [ expression ] , ";" ;

@@ -725,6 +725,22 @@ public sealed class BinderTests
     }
 
     [Fact]
+    public void CallRootedElementAssignment_BindsAgainstTheReturnedElementType()
+    {
+        // Spec §8.4: any index expression is a target, so the chain may be
+        // rooted at a call; the value still checks against the element type.
+        const string source = """
+            fn identity(values: []i64) -> []i64 { return values; }
+            fn main() { let a = [1]; identity(a)[0] = 9; identity(a)[0] += true; }
+            """;
+
+        Compilation compilation = Compile(source);
+
+        Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
+        Assert.Equal("ARITH3009", diagnostic.Code);
+    }
+
+    [Fact]
     public void ArrayParametersAndReturns_BindOnOrdinaryFunctions()
     {
         const string source = """

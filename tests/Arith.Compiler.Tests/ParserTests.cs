@@ -87,6 +87,12 @@ public sealed class ParserTests
     [InlineData("a[0] = 1;", "(= (index a 0) 1)")]
     [InlineData("grid[i][j] += 2;", "(+= (index (index grid i) j) 2)")]
     [InlineData("a[i] %= 2;", "(%= (index a i) 2)")]
+    // Spec §8.4: any index expression is a target — the chain's root may be
+    // a call, a fresh array, or a parenthesized expression.
+    [InlineData("identity(values)[0] = 9;", "(= (index (call identity values) 0) 9)")]
+    [InlineData("f()[0][1] = 1;", "(= (index (index (call f) 0) 1) 1)")]
+    [InlineData("[1, 2][0] = 9;", "(= (index (array 1 2) 0) 9)")]
+    [InlineData("(a)[0] = 1;", "(= (index (paren a) 0) 1)")]
     [InlineData("total += i;", "(+= total i)")]
     [InlineData("x -= 1;", "(-= x 1)")]
     [InlineData("x *= 2;", "(*= x 2)")]
@@ -214,14 +220,7 @@ public sealed class ParserTests
     [Theory]
     [InlineData("fn t() { f() = 1; }", "f()")]
     [InlineData("fn t() { 1 + 2 = 3; }", "1 + 2")]
-    [InlineData("fn t() { (a) = 1; }", "(a)")] // Spec §8.4: the target is a name or index chain, not any expression.
-    // The name-root rule applies to the whole chain, not just the outer
-    // node: an index chain rooted at a call, literal, or parenthesized
-    // expression is not a target either.
-    [InlineData("fn t() { identity(values)[0] = 9; }", "identity(values)[0]")]
-    [InlineData("fn t() { [1, 2][0] = 9; }", "[1, 2][0]")]
-    [InlineData("fn t() { (a)[0] = 1; }", "(a)[0]")]
-    [InlineData("fn t() { f()[0][1] = 1; }", "f()[0][1]")]
+    [InlineData("fn t() { (a) = 1; }", "(a)")] // Spec §8.4: the target itself is a name or an index expression; `(a)` is neither.
     public void Parse_InvalidAssignmentTarget_ReportsArith2004(string source, string targetText)
     {
         SyntaxTree tree = Parse(source);

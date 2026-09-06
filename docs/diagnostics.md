@@ -35,7 +35,7 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH2001 | `unexpected {0}, expected {1}` | The parser needed a specific token or construct and found something else |
 | ARITH2002 | `only a call expression can be used as a statement` | An expression other than a call appears as a statement (`1 + 2;`) |
 | ARITH2003 | `trailing comma is not allowed` | A parameter list, argument list, or array literal ends with `,` |
-| ARITH2004 | `the target of an assignment must be a variable or an array element` | The left side of `=` (or a compound operator) is not a name or an index chain (`f() = 1;`) |
+| ARITH2004 | `the target of an assignment must be a variable or an array element` | The left side of `=` (or a compound operator) is not a name or an index expression (`f() = 1;`, `1 + 2 = 3;`) |
 
 ## Semantic errors (ARITH3xxx)
 

@@ -393,20 +393,14 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Spec §8.4: an assignment target is an index chain rooted at a
-    /// variable name — `a` or `grid[i][j]`, never a call, literal, or
-    /// parenthesized root like `f(x)[0]`, whose mutation the grammar
-    /// forbids. An error root was already diagnosed and passes silently.
+    /// Spec §8.4: an assignment target is a variable name or an index
+    /// expression — any index expression, so a chain may be rooted at a
+    /// call or a fresh array literal (`f(x)[0] = 9;` writes through the
+    /// returned reference). An error target was already diagnosed and
+    /// passes silently.
     /// </summary>
-    private static bool IsAssignmentTarget(ExpressionSyntax expression)
-    {
-        while (expression is IndexExpressionSyntax index)
-        {
-            expression = index.Target;
-        }
-
-        return expression is NameExpressionSyntax or ErrorExpressionSyntax;
-    }
+    private static bool IsAssignmentTarget(ExpressionSyntax expression) =>
+        expression is NameExpressionSyntax or IndexExpressionSyntax or ErrorExpressionSyntax;
 
     private static bool CanStartExpression(SyntaxKind kind) =>
         SyntaxFacts.IsTypeKeyword(kind) || kind is

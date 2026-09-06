@@ -25,7 +25,7 @@ public sealed record LetStatementSyntax(
 /// <summary>
 /// <c>target op value;</c> where op is <c>=</c> or a compound-assignment
 /// operator. The parser guarantees Target is a NameExpressionSyntax or an
-/// IndexExpressionSyntax chain (spec §8.4).
+/// IndexExpressionSyntax — rooted at any postfix expression (spec §8.4).
 /// </summary>
 public sealed record AssignmentStatementSyntax(
     ExpressionSyntax Target,
