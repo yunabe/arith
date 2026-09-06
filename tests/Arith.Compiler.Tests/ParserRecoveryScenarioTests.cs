@@ -375,22 +375,22 @@ public sealed class ParserRecoveryScenarioTests
     // IDEAL: `for i = 0; …` is unmistakably a C-style for; one diagnostic
     // explaining Arith's range syntax (`for i in 0..10`) beats parsing the
     // three clauses as garbage.
-    // TODAY: eight diagnostics. The `i < 10` clause becomes a statement,
-    // `i += 1` is adopted as a loop-body statement, and the real body's
-    // '{' is reported twice.
+    // TODAY: seven diagnostics. Since the range clause became optional
+    // (v0.2 array iteration), the wreck now parses as a for-in over an
+    // error iterable whose body adopts the three clauses as statements.
     [Fact]
-    public void CStyleForLoop_ProducesEightDiagnostics()
+    public void CStyleForLoop_ProducesSevenDiagnostics()
     {
         (string[] codes, string dump) = ParseScenario("fn t() { for i = 0; i < 10; i += 1 { } }");
 
         string[] expectedCodes =
         [
-            "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001",
-            "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001",
+            "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2002",
+            "ARITH2002", "ARITH2001", "ARITH2001",
         ];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal(
-            "(fn t (block (for i  (error) 0 (block (error-stmt) (expr (< i 10)) (+= i 1) (error-stmt)))))",
+            "(fn t (block (for-in i (error) (block (expr 0) (expr (< i 10)) (+= i 1) (error-stmt)))))",
             dump);
     }
 
@@ -596,8 +596,9 @@ public sealed class ParserRecoveryScenarioTests
     // IDEAL: `for i = 0..10` is one token away from Arith's range syntax;
     // report "expected 'in', found '='", treat it as `in`, and preserve the
     // loop and the statement after it.
-    // TODAY: five diagnostics follow. The start and range operator are lost,
-    // the loop body is mostly debris, and only the later let fully recovers.
+    // TODAY: six diagnostics. The fabricated `in` leaves `=` unconsumed, so
+    // the loop becomes a for-in over an error iterable, the range is lost,
+    // and only the later let fully recovers.
     [Fact]
     public void EqualsInsteadOfIn_DestroysTheRangeLoop()
     {
@@ -605,11 +606,24 @@ public sealed class ParserRecoveryScenarioTests
             "fn t() { for i = 0..10 { print(i); } let y = 2; }");
 
         string[] expectedCodes =
-            ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001", "ARITH2001"];
+            ["ARITH2001", "ARITH2001", "ARITH2001", "ARITH2002", "ARITH2001", "ARITH2001"];
         Assert.Equal(expectedCodes, codes);
         Assert.Equal(
-            "(fn t (block (for i  (error) 0 (block (error-stmt))) (let y 2)))",
+            "(fn t (block (for-in i (error) (block (expr 0) (error-stmt))) (let y 2)))",
             dump);
+    }
+
+    // A contrast case that lands well: a for-in missing its iterable stops
+    // cleanly at the '{' (it joined the error-expression stop set for
+    // ranges), so one diagnostic and the loop shape survives.
+    [Fact]
+    public void MissingForInIterable_RecoversWithOneDiagnostic()
+    {
+        (string[] codes, string dump) = ParseScenario("fn t() { for x in { } }");
+
+        string[] expectedCodes = ["ARITH2001"];
+        Assert.Equal(expectedCodes, codes);
+        Assert.Equal("(fn t (block (for-in x (error) (block))))", dump);
     }
 
     // IDEAL: one diagnostic for the missing range start, leaving '..' in

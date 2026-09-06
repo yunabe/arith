@@ -595,6 +595,46 @@ public sealed class BuildRunCommandTests : IDisposable
         Assert.Equal(["hey 1.5", "hey 3", "hey 4.5", "!!!"], Lines(result.Output));
     }
 
+    [Fact]
+    public void Run_StringArrayMain_ReceivesAllArgumentsVerbatim()
+    {
+        // Spec §5.1: `main(args: []string)` receives every argument
+        // unparsed; the program name is not included.
+        string source = WriteSource("args.arith", """
+            fn main(args: []string) -> i32 {
+                print(len(args));
+                for arg in args {
+                    print(arg);
+                }
+                return i32(len(args));
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source, "one", "2.5e2", "NaN");
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(3, result.ExitCode);
+        Assert.Equal(["3", "one", "2.5e2", "NaN"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Run_StringArrayMain_AcceptsZeroArgumentsWithoutUsage()
+    {
+        // The []string form accepts any count and never takes the
+        // usage-line exit (spec §5.1).
+        string source = WriteSource("zeroargs.arith", """
+            fn main(args: []string) {
+                print(len(args));
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["0"], Lines(result.Output));
+    }
+
     [Theory]
     [InlineData]                       // Too few arguments.
     [InlineData("1", "2")]             // Too many.

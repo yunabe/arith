@@ -113,6 +113,12 @@ public sealed class ParserTests
     [InlineData("for i in 0..10 { print(i); }", "(for i .. 0 10 (block (expr (call print i))))")]
     [InlineData("for i in 0..=10 { }", "(for i ..= 0 10 (block))")]
     [InlineData("for i in a + 1..b - 1 { }", "(for i .. (+ a 1) (- b 1) (block))")]
+    // Without a range operator the loop iterates an array (spec §9.3); any
+    // array-valued expression works.
+    [InlineData("for value in values { print(value); }", "(for-in value values (block (expr (call print value))))")]
+    [InlineData("for row in grid { }", "(for-in row grid (block))")]
+    [InlineData("for x in rows()[0] { }", "(for-in x (index (call rows) 0) (block))")]
+    [InlineData("for x in [1, 2] { }", "(for-in x (array 1 2) (block))")]
     public void ParseStatement_ProducesExpectedShape(string statement, string expected)
     {
         Assert.Equal(expected, DumpStatement(statement));

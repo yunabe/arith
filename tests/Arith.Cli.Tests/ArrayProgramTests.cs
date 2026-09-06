@@ -176,6 +176,61 @@ public sealed class ArrayProgramTests : IDisposable
         Assert.Equal(["3", "2", "0", "3", "8"], Lines(result.Output));
     }
 
+    [Fact]
+    public void Run_ForEach_VisitsElementsInOrderWithControlFlow()
+    {
+        // Spec §9.3: elements visit in index order, the element is read when
+        // the iteration starts (so writes are visible to later iterations),
+        // and break/continue behave as in the range loop.
+        string source = WriteSource("foreach.arith", """
+            fn main() {
+                let values = [10, 20, 30];
+                let total = 0;
+                for value in values {
+                    total += value;
+                }
+                print(total);
+
+                for value in values {
+                    values[2] = 99;
+                    print(value);
+                }
+
+                for row in [[1, 2], [3]] {
+                    print(len(row));
+                }
+
+                let empty: []i64 = [];
+                for x in empty {
+                    print(x);
+                }
+                for x in [1, 2, 3, 4] {
+                    if x == 2 {
+                        continue;
+                    }
+                    if x == 4 {
+                        break;
+                    }
+                    print(x);
+                }
+                print("done");
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        string[] expected =
+        [
+            "60",
+            "10", "20", "99",
+            "2", "1",
+            "1", "3", "done",
+        ];
+        Assert.Equal(expected, Lines(result.Output));
+    }
+
     [Theory]
     [InlineData("let a = [1, 2]; print(a[2]);", "System.IndexOutOfRangeException")]
     [InlineData("let a = [1, 2]; print(a[-1]);", "System.IndexOutOfRangeException")]

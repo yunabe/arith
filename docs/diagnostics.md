@@ -65,7 +65,9 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH3022 | `a value of type '{0}' cannot be indexed` | `x[i]` where `x` is not an array |
 | ARITH3023 | `'len' requires an array argument but was given '{0}'` | `len` is applied to a non-array value |
 | ARITH3024 | `'print' does not accept a value of type '{0}'` | `print` is given an array — arrays have no defined text form |
-| ARITH3025 | `'main' cannot declare a parameter of type '{0}'` | `main` declares an array-typed parameter |
+| ARITH3025 | `'main' cannot declare a parameter of type '{0}'` | `main` declares an array-typed parameter other than a sole `[]string` |
+| ARITH3026 | `'for' cannot iterate over a value of type '{0}'` | `for x in e` where `e` is not an array (a range needs `..`/`..=`) |
+| ARITH3027 | `'main' cannot combine a '[]string' parameter with other parameters` | `main(args: []string, n: i64)` — the `[]string` form must be the only parameter |
 
 The registry itself is [`ErrorCodes.cs`](../src/Arith.Compiler/Diagnostics/ErrorCodes.cs);
 a test keeps this table and the registry in sync.

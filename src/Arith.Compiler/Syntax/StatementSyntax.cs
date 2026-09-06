@@ -72,6 +72,13 @@ public sealed record ForStatementSyntax(
     BlockSyntax Body,
     TextSpan Span) : StatementSyntax(Span);
 
+/// <summary><c>for name in iterable block</c> — array iteration (spec §9.3).</summary>
+public sealed record ForEachStatementSyntax(
+    Token Identifier,
+    ExpressionSyntax Iterable,
+    BlockSyntax Body,
+    TextSpan Span) : StatementSyntax(Span);
+
 /// <summary><c>break;</c>.</summary>
 public sealed record BreakStatementSyntax(TextSpan Span) : StatementSyntax(Span);
 
