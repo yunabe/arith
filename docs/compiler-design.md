@@ -450,19 +450,38 @@ front-end sugar last:
      chains, and multi-index assignment targets.
    - Binder: the §7 structural expected-type propagation into element lists
      and the repeat form; `len` as the second compiler-recognized builtin —
-     expression-valued, unlike `print`.
+     expression-valued, unlike `print`. A second value *kind* also means
+     auditing every binder path that today equates "not void" with
+     "primitive": `print` and `string(…)` must reject array arguments with
+     a source diagnostic rather than binding them and failing in the
+     emitter — a check that, via the desugaring, also enforces the
+     primitive-hole rule for interpolated strings later.
    - Emitter: `newarr`/`ldlen` plus an element-kind dispatch for
-     `ldelem`/`stelem` (`.i4/.i8/.r4/.r8` for numerics, `.i1` for bool,
-     `.ref` for string *and* array elements — so the dispatch nested arrays
-     need is already paid for by `[]string`). Array-of-array element tokens
-     need the **TypeSpec** table (a signature blob per array type, cached) —
-     the one genuinely new metadata concept in v0.2. The repeat form lowers
-     to a small IL fill loop; the CLR provides bounds checks for free.
+     `ldelem`/`stelem` (`.i4/.i8/.r4/.r8` for numerics, `ldelem.u1` loads /
+     `stelem.i1` stores for bool — the load must zero-extend — and `.ref`
+     for string *and* array elements, so the dispatch nested arrays need is
+     already paid for by `[]string`). **Width discipline**: these opcodes
+     traffic in native integers while Arith's counts, indexes, and lengths
+     are `i64`, so the repeat count converts with `conv.ovf.u` before
+     `newarr` (a negative count faults right there, satisfying spec §4.5),
+     every index converts with `conv.ovf.i` before `ldelem`/`stelem` (a
+     negative index passes through to fault as the bounds check, and an
+     index above native range faults instead of truncating on a 32-bit
+     target), and `ldlen`'s native-unsigned result zero-extends to `i64`
+     with `conv.u8` for `len`. Array-of-array element tokens need the
+     **TypeSpec** table (a signature blob per array type, cached) — the one
+     genuinely new metadata concept in v0.2. The repeat form lowers to a
+     small IL fill loop; the CLR provides bounds checks for free.
 3. **Array iteration and the entry point**: `for x in a` lowers to an index
    loop over temps holding the array and its length (element loaded per
    iteration, per spec §9.3); the entry-point bridge gains the
    `main(args: []string)` variant, which passes the runtime's `string[]`
-   through without parsing or the usage path.
+   through without parsing or the usage path. The binder's entry-point
+   validation grows to match: `main` accepts either all-primitive
+   parameters or exactly one `[]string` parameter, and every other
+   array-bearing signature — `main(xs: []i32)`, `main(args: []string,
+   n: i64)` — is a source diagnostic, so no invalid form ever reaches the
+   typed-argument bridge.
 4. **Interpolated strings** (spec §4.6). Front end only, by desugaring: the
    parser produces the same concat-of-`string(…)` tree the equivalent `+`
    expression would, so the binder and emitter change not at all. Lexing
@@ -478,6 +497,8 @@ front-end sugar last:
 
 New diagnostics (codes assigned as each lands, registry order preserved):
 mixed or undeterminable array element types, an empty array literal with no
-expected type, indexing a non-array, `len` misuse, and — lexical — a bare
-`$` inside an interpolated string. String-conversion failures and array
-bounds/length faults are runtime errors, not diagnostics.
+expected type, indexing a non-array, `len` misuse, an array argument to
+`print` or `string(…)`, an invalid array-bearing `main` signature, and —
+lexical — a bare `$` inside an interpolated string. String-conversion
+failures and array bounds/length faults are runtime errors, not
+diagnostics.
