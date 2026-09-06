@@ -18,16 +18,16 @@ internal static class SyntaxDumper
         FunctionDeclarationSyntax fn =>
             $"(fn {fn.Identifier.Text}"
             + string.Concat(fn.Parameters.Select(p => " " + Dump(p)))
-            + (fn.ReturnType is null ? "" : $" -> {fn.ReturnType.Keyword.Text}")
+            + (fn.ReturnType is null ? "" : $" -> {TypeText(fn.ReturnType)}")
             + $" {Dump(fn.Body)})",
-        ParameterSyntax parameter => $"(param {parameter.Identifier.Text} {parameter.Type.Keyword.Text})",
+        ParameterSyntax parameter => $"(param {parameter.Identifier.Text} {TypeText(parameter.Type)})",
         BlockSyntax block => $"(block{string.Concat(block.Statements.Select(s => " " + Dump(s)))})",
         LetStatementSyntax let =>
             let.Type is null
                 ? $"(let {let.Identifier.Text} {Dump(let.Initializer)})"
-                : $"(let {let.Identifier.Text} : {let.Type.Keyword.Text} {Dump(let.Initializer)})",
+                : $"(let {let.Identifier.Text} : {TypeText(let.Type)} {Dump(let.Initializer)})",
         AssignmentStatementSyntax assignment =>
-            $"({assignment.OperatorToken.Text} {assignment.Identifier.Text} {Dump(assignment.Value)})",
+            $"({assignment.OperatorToken.Text} {Dump(assignment.Target)} {Dump(assignment.Value)})",
         ExpressionStatementSyntax statement => $"(expr {Dump(statement.Expression)})",
         ReturnStatementSyntax ret => ret.Value is null ? "(return)" : $"(return {Dump(ret.Value)})",
         IfStatementSyntax conditional =>
@@ -49,7 +49,15 @@ internal static class SyntaxDumper
         BinaryExpressionSyntax binary =>
             $"({binary.OperatorToken.Text} {Dump(binary.Left)} {Dump(binary.Right)})",
         ParenthesizedExpressionSyntax paren => $"(paren {Dump(paren.Expression)})",
+        ArrayLiteralExpressionSyntax array =>
+            $"(array{string.Concat(array.Elements.Select(e => " " + Dump(e)))})",
+        ArrayRepeatExpressionSyntax repeat => $"(array-repeat {Dump(repeat.Value)} {Dump(repeat.Count)})",
+        IndexExpressionSyntax index => $"(index {Dump(index.Target)} {Dump(index.Index)})",
         ErrorExpressionSyntax => "(error)",
         _ => throw new UnreachableException($"unhandled node type {node.GetType().Name}"),
     };
+
+    /// <summary>A type as written: `[]` per array depth, then the keyword, e.g. `[][]i64`.</summary>
+    private static string TypeText(TypeSyntax type) =>
+        string.Concat(Enumerable.Repeat("[]", type.ArrayDepth)) + type.Keyword.Text;
 }

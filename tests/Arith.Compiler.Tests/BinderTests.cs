@@ -617,4 +617,124 @@ public sealed class BinderTests
         Assert.Equal("add", call.Function.Name);
         Assert.Same(ArithType.I64, call.Arguments[0].Type);
     }
+
+    // ---- Arrays (spec §3.1, §4.5, §8.6, §10.2) --------------------------
+
+    [Fact]
+    public void ArrayTypes_AreInternedStructurally()
+    {
+        Assert.Same(ArithType.I64.ArrayOf(), ArithType.I64.ArrayOf());
+        Assert.Same(ArithType.I64.ArrayOf().ArrayOf(), ArithType.I64.ArrayOf().ArrayOf());
+        Assert.Equal("[]i64", ArithType.I64.ArrayOf().Name);
+        Assert.Equal("[][]i64", ArithType.I64.ArrayOf().ArrayOf().Name);
+        Assert.Same(ArithType.I64, ArithType.I64.ArrayOf().ElementType);
+        Assert.True(ArithType.I64.ArrayOf().IsArray);
+        Assert.False(ArithType.I64.ArrayOf().IsPrimitive);
+    }
+
+    [Theory]
+    [InlineData("let a = [1, 2, 3];", "[]i64")]                  // Elements take their defaults.
+    [InlineData("let a = [1.5];", "[]f64")]
+    [InlineData("let a = [true, false];", "[]bool")]
+    [InlineData("let a = [\"x\"];", "[]string")]
+    [InlineData("let a = [1i32, 2i32];", "[]i32")]
+    [InlineData("let a: []i32 = [1, 2];", "[]i32")]              // Expected element type forces literals.
+    [InlineData("let a: []i64 = [];", "[]i64")]                  // Empty literal from expectation.
+    [InlineData("let a: [][]i64 = [[1], []];", "[][]i64")]       // Expectation propagates recursively.
+    [InlineData("let a = [[1], [2, 3]];", "[][]i64")]            // Nested without expectation.
+    [InlineData("let a = [0; 10];", "[]i64")]
+    [InlineData("let a: []f32 = [0.0; 4];", "[]f32")]
+    [InlineData("let a = [[0; 3]; 2];", "[][]i64")]
+    [InlineData("let n = len([1, 2]);", "i64")]
+    [InlineData("let x = [1i32, 2i32][0];", "i32")]              // Index reads the element type.
+    [InlineData("let x = [[1], [2]][0][0];", "i64")]             // ... and chains.
+    public void ArrayExpressions_GetTheSpecifiedType(string letStatement, string expectedType)
+    {
+        Assert.Equal(expectedType, LetType(letStatement));
+    }
+
+    [Theory]
+    [InlineData("let a = [];", "ARITH3021")]                     // Spec §4.5: no element type available.
+    [InlineData("let a: i64 = [];", "ARITH3021")]                // A non-array expectation does not help.
+    [InlineData("let a = [1i32, 2];", "ARITH3009")]              // Independent typing: 2 defaults to i64.
+    [InlineData("let a = [1, 2.5];", "ARITH3009")]
+    [InlineData("let a = [1, true];", "ARITH3009")]
+    [InlineData("let a: []i32 = [1i64];", "ARITH3009")]          // Expected element type is exact.
+    [InlineData("let a: []i64 = 1;", "ARITH3009")]               // Array expected, scalar found.
+    [InlineData("let a = [1, 2]; let b: i64 = a;", "ARITH3009")]
+    [InlineData("let a = [0; true];", "ARITH3009")]              // Count must be i64.
+    [InlineData("let a = [0; 1i32];", "ARITH3009")]
+    [InlineData("let x = 1; let e = x[0];", "ARITH3022")]        // Only arrays are indexable.
+    [InlineData("let e = \"hi\"[0];", "ARITH3022")]
+    [InlineData("let a = [1, 2]; let e = a[true];", "ARITH3009")] // Index must be i64.
+    [InlineData("let n = len(1);", "ARITH3023")]
+    [InlineData("let n = len(\"hi\");", "ARITH3023")]            // Spec §10.2: len is arrays-only.
+    [InlineData("let n = len();", "ARITH3008")]
+    [InlineData("let n = len([1], [2]);", "ARITH3008")]
+    [InlineData("print([1, 2]);", "ARITH3024")]                  // Spec §3.1: print takes primitives only.
+    [InlineData("let s = string([1, 2]);", "ARITH3020")]         // No conversions involve arrays.
+    [InlineData("let a = [1, 2] == [1, 2];", "ARITH3010")]       // Spec §3.1: no operators on arrays.
+    [InlineData("let a = [1] + [2];", "ARITH3010")]
+    [InlineData("let a = -[1];", "ARITH3011")]
+    [InlineData("let a = [1, 2]; a += [3];", "ARITH3010")]       // Compound needs arithmetic operand types.
+    [InlineData("let a = [1, 2]; a[0] += true;", "ARITH3009")]
+    [InlineData("let b = [true]; b[0] += true;", "ARITH3010")]
+    public void InvalidArrayUse_ReportsTheSpecifiedCode(string body, string expectedCode)
+    {
+        Compilation compilation = CompileMain(body);
+
+        Assert.Contains(expectedCode, Codes(compilation));
+    }
+
+    [Fact]
+    public void ElementAssignment_BindsArrayIndexAndElementType()
+    {
+        Compilation compilation = CompileMain("let a = [1, 2]; a[0] = 5; a[1] += 2;");
+
+        Assert.Empty(compilation.Diagnostics);
+        BoundBlock main = FunctionBody(compilation, "main");
+        BoundElementAssignmentStatement plain =
+            Assert.IsType<BoundElementAssignmentStatement>(main.Statements[1]);
+        Assert.Same(ArithType.I64, plain.ElementType);
+        Assert.Null(plain.CompoundOperator);
+        Assert.Same(ArithType.I64, plain.Index.Type);
+        Assert.Same(ArithType.I64, plain.Value.Type);
+        BoundElementAssignmentStatement compound =
+            Assert.IsType<BoundElementAssignmentStatement>(main.Statements[2]);
+        Assert.Equal(BoundBinaryOperatorKind.Addition, compound.CompoundOperator);
+    }
+
+    [Fact]
+    public void RedeclaringLen_ReportsArith3002WithTheName()
+    {
+        Compilation compilation = Compile("fn len(a: i64) -> i64 { return a; } fn main() { }");
+
+        Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
+        Assert.Equal("ARITH3002", diagnostic.Code);
+        Assert.Equal("'len' is a built-in function and cannot be redeclared", diagnostic.Message);
+    }
+
+    [Fact]
+    public void ArrayParameterOnMain_ReportsArith3025AtTheParameter()
+    {
+        Compilation compilation = Compile("fn main(args: []string) { }");
+
+        Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
+        Assert.Equal("ARITH3025", diagnostic.Code);
+        Assert.Equal("'main' cannot declare a parameter of type '[]string'", diagnostic.Message);
+    }
+
+    [Fact]
+    public void ArrayParametersAndReturns_BindOnOrdinaryFunctions()
+    {
+        const string source = """
+            fn head(values: []i64) -> i64 { return values[0]; }
+            fn rows(n: i64) -> [][]i64 { return [[0; n]; n]; }
+            fn main() { print(head(rows(2)[0])); }
+            """;
+
+        Compilation compilation = Compile(source);
+
+        Assert.Empty(compilation.Diagnostics);
+    }
 }

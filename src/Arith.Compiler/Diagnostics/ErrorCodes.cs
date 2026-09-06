@@ -33,12 +33,15 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor TrailingComma =
         new("ARITH2003", "trailing comma is not allowed");
 
+    public static readonly DiagnosticDescriptor InvalidAssignmentTarget =
+        new("ARITH2004", "the target of an assignment must be a variable or an array element");
+
     // Semantic errors (ARITH3xxx).
     public static readonly DiagnosticDescriptor DuplicateFunction =
         new("ARITH3001", "function '{0}' is already declared");
 
-    public static readonly DiagnosticDescriptor PrintRedeclared =
-        new("ARITH3002", "'print' is a built-in function and cannot be redeclared");
+    public static readonly DiagnosticDescriptor BuiltinRedeclared =
+        new("ARITH3002", "'{0}' is a built-in function and cannot be redeclared");
 
     public static readonly DiagnosticDescriptor MissingEntryPoint =
         new("ARITH3003", "program must contain a 'main' function");
@@ -93,4 +96,19 @@ public static class ErrorCodes
 
     public static readonly DiagnosticDescriptor InvalidConversion =
         new("ARITH3020", "cannot convert from '{0}' to '{1}'");
+
+    public static readonly DiagnosticDescriptor EmptyArrayLiteralNeedsType =
+        new("ARITH3021", "an empty array literal requires an expected array type");
+
+    public static readonly DiagnosticDescriptor NotIndexable =
+        new("ARITH3022", "a value of type '{0}' cannot be indexed");
+
+    public static readonly DiagnosticDescriptor LenRequiresArray =
+        new("ARITH3023", "'len' requires an array argument but was given '{0}'");
+
+    public static readonly DiagnosticDescriptor PrintRequiresPrimitive =
+        new("ARITH3024", "'print' does not accept a value of type '{0}'");
+
+    public static readonly DiagnosticDescriptor InvalidEntryPointParameter =
+        new("ARITH3025", "'main' cannot declare a parameter of type '{0}'");
 }

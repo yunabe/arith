@@ -54,6 +54,8 @@ public static class SyntaxFacts
         SyntaxKind.CloseParenToken => ")",
         SyntaxKind.OpenBraceToken => "{",
         SyntaxKind.CloseBraceToken => "}",
+        SyntaxKind.OpenBracketToken => "[",
+        SyntaxKind.CloseBracketToken => "]",
         SyntaxKind.CommaToken => ",",
         SyntaxKind.ColonToken => ":",
         SyntaxKind.SemicolonToken => ";",

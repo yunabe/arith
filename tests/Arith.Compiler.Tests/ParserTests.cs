@@ -59,6 +59,20 @@ public sealed class ParserTests
     [InlineData("i64(small)", "(call i64 small)")]
     [InlineData("f64(large) / 4.0", "(/ (call f64 large) 4.0)")]
     [InlineData("\"answer=\" + string(a)", "(+ \"answer=\" (call string a))")]
+    [InlineData("[]", "(array)")]
+    [InlineData("[1, 2, 3]", "(array 1 2 3)")]
+    [InlineData("[[1], [2, 3]]", "(array (array 1) (array 2 3))")]
+    [InlineData("[0; n + 1]", "(array-repeat 0 (+ n 1))")]
+    [InlineData("[[0; 3]; 2]", "(array-repeat (array-repeat 0 3) 2)")]
+    [InlineData("a[0]", "(index a 0)")]
+    [InlineData("grid[i][j]", "(index (index grid i) j)")]
+    [InlineData("rows(3)[0]", "(index (call rows 3) 0)")]
+    [InlineData("[1, 2][0]", "(index (array 1 2) 0)")]
+    [InlineData("-a[0]", "(- (index a 0))")] // Indexing binds tighter than unary minus (spec §8.5).
+    [InlineData("a[i] + b[i]", "(+ (index a i) (index b i))")]
+    [InlineData("a[i + 1] * 2", "(* (index a (+ i 1)) 2)")]
+    [InlineData("len(a)", "(call len a)")]
+    [InlineData("a[len(a) - 1]", "(index a (- (call len a) 1))")]
     public void ParseExpression_ProducesExpectedShape(string expression, string expected)
     {
         Assert.Equal(expected, DumpExpression(expression));
@@ -67,7 +81,12 @@ public sealed class ParserTests
     [Theory]
     [InlineData("let x = 1;", "(let x 1)")]
     [InlineData("let limit: i32 = 10;", "(let limit : i32 10)")]
+    [InlineData("let values: []i64 = [];", "(let values : []i64 (array))")]
+    [InlineData("let grid: [][]f64 = [];", "(let grid : [][]f64 (array))")]
     [InlineData("x = 1;", "(= x 1)")]
+    [InlineData("a[0] = 1;", "(= (index a 0) 1)")]
+    [InlineData("grid[i][j] += 2;", "(+= (index (index grid i) j) 2)")]
+    [InlineData("a[i] %= 2;", "(%= (index a i) 2)")]
     [InlineData("total += i;", "(+= total i)")]
     [InlineData("x -= 1;", "(-= x 1)")]
     [InlineData("x *= 2;", "(*= x 2)")]
@@ -101,6 +120,12 @@ public sealed class ParserTests
     [InlineData(
         "fn main() -> i32 { return 0; }",
         "(fn main -> i32 (block (return 0)))")]
+    [InlineData(
+        "fn sum(values: []i64) -> i64 { return 0; }",
+        "(fn sum (param values []i64) -> i64 (block (return 0)))")]
+    [InlineData(
+        "fn make() -> [][]i32 { return [[1i32]]; }",
+        "(fn make -> [][]i32 (block (return (array (array 1i32)))))")]
     public void ParseFunctionDeclaration_ProducesExpectedShape(string source, string expected)
     {
         Assert.Equal(expected, DumpProgram(source));
@@ -184,6 +209,32 @@ public sealed class ParserTests
         SyntaxTree tree = Parse(source);
 
         Assert.Contains(tree.Diagnostics, d => d.Code == "ARITH2001");
+    }
+
+    [Theory]
+    [InlineData("fn t() { f() = 1; }", "f()")]
+    [InlineData("fn t() { 1 + 2 = 3; }", "1 + 2")]
+    [InlineData("fn t() { (a) = 1; }", "(a)")] // Spec §8.4: the target is a name or index chain, not any expression.
+    public void Parse_InvalidAssignmentTarget_ReportsArith2004(string source, string targetText)
+    {
+        SyntaxTree tree = Parse(source);
+
+        Diagnostic diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("ARITH2004", diagnostic.Code);
+        Assert.Equal(targetText, tree.Text.ToString(diagnostic.Span));
+        Assert.IsType<ErrorStatementSyntax>(Assert.Single(Assert.Single(tree.Root.Functions).Body.Statements));
+    }
+
+    [Fact]
+    public void Parse_TrailingCommaInArrayLiteral_ReportsArith2003AndKeepsElements()
+    {
+        SyntaxTree tree = Parse("fn t() { let a = [1, 2,]; }");
+
+        Diagnostic diagnostic = Assert.Single(tree.Diagnostics);
+        Assert.Equal("ARITH2003", diagnostic.Code);
+        LetStatementSyntax let = Assert.IsType<LetStatementSyntax>(
+            Assert.Single(Assert.Single(tree.Root.Functions).Body.Statements));
+        Assert.Equal("(array 1 2)", SyntaxDumper.Dump(let.Initializer));
     }
 
     [Fact]

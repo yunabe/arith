@@ -38,6 +38,8 @@ public enum SyntaxKind
     CloseParenToken,
     OpenBraceToken,
     CloseBraceToken,
+    OpenBracketToken,
+    CloseBracketToken,
     CommaToken,
     ColonToken,
     SemicolonToken,

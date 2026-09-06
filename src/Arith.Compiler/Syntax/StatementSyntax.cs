@@ -22,9 +22,13 @@ public sealed record LetStatementSyntax(
     ExpressionSyntax Initializer,
     TextSpan Span) : StatementSyntax(Span);
 
-/// <summary><c>name op value;</c> where op is <c>=</c> or a compound-assignment operator.</summary>
+/// <summary>
+/// <c>target op value;</c> where op is <c>=</c> or a compound-assignment
+/// operator. The parser guarantees Target is a NameExpressionSyntax or an
+/// IndexExpressionSyntax chain (spec §8.4).
+/// </summary>
 public sealed record AssignmentStatementSyntax(
-    Token Identifier,
+    ExpressionSyntax Target,
     Token OperatorToken,
     ExpressionSyntax Value,
     TextSpan Span) : StatementSyntax(Span);

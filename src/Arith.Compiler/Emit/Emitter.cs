@@ -34,6 +34,8 @@ public sealed class Emitter
     private readonly BlobBuilder _ilStream = new();
     private readonly MethodBodyStreamEncoder _bodyStream;
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
+    private readonly Dictionary<ArithType, TypeReferenceHandle> _primitiveTypeRefs = [];
+    private readonly Dictionary<ArithType, TypeSpecificationHandle> _typeSpecs = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantToString = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantTryParse = [];
     private readonly Dictionary<ArithType, MemberReferenceHandle> _invariantParse = [];
@@ -181,6 +183,7 @@ public sealed class Emitter
         TypeReferenceHandle cultureInfo = AddTypeReference(systemRuntime, "System.Globalization", "CultureInfo");
         TypeReferenceHandle formatProvider = AddTypeReference(systemRuntime, "System", "IFormatProvider");
         TypeReferenceHandle stringType = AddTypeReference(systemRuntime, "System", "String");
+        _primitiveTypeRefs[ArithType.String] = stringType;
 
         // String == / != are ordinal content equality (spec §8.2, design
         // §4.5): lower to the static string.Equals(string, string), never to
@@ -222,6 +225,7 @@ public sealed class Emitter
                 }));
 
         TypeReferenceHandle booleanType = AddTypeReference(systemRuntime, "System", "Boolean");
+        _primitiveTypeRefs[ArithType.Bool] = booleanType;
 
         // Numeric print must be culture-invariant (spec §10.1, design §4.5):
         // the typed Console.WriteLine overloads format through the current
@@ -247,6 +251,7 @@ public sealed class Emitter
         foreach ((ArithType type, string name) in numericTypes)
         {
             TypeReferenceHandle typeReference = AddTypeReference(systemRuntime, "System", name);
+            _primitiveTypeRefs[type] = typeReference;
             _invariantToString[type] = _metadata.AddMemberReference(
                 typeReference,
                 _metadata.GetOrAddString("ToString"),
@@ -525,9 +530,39 @@ public sealed class Emitter
             });
     }
 
+    /// <summary>
+    /// The metadata token naming <paramref name="type"/>, as `newarr` needs
+    /// for its element type: a TypeRef for a primitive, and — since only
+    /// TypeSpec rows can name constructed types — a cached TypeSpec holding
+    /// the SZArray signature for an array (design §7).
+    /// </summary>
+    private EntityHandle GetTypeHandle(ArithType type)
+    {
+        if (!type.IsArray)
+        {
+            return _primitiveTypeRefs[type];
+        }
+
+        if (!_typeSpecs.TryGetValue(type, out TypeSpecificationHandle handle))
+        {
+            BlobBuilder blob = new();
+            EncodeType(new BlobEncoder(blob).TypeSpecificationSignature(), type);
+            handle = _metadata.AddTypeSpecification(_metadata.GetOrAddBlob(blob));
+            _typeSpecs.Add(type, handle);
+        }
+
+        return handle;
+    }
+
     private static void EncodeType(SignatureTypeEncoder encoder, ArithType type)
     {
-        if (type == ArithType.Bool)
+        if (type.IsArray)
+        {
+            // Arrays are single-dimension, zero-based .NET arrays; the
+            // element encodes recursively, so `[][]i64` nests two SZArrays.
+            EncodeType(encoder.SZArray(), type.ElementType!);
+        }
+        else if (type == ArithType.Bool)
         {
             encoder.Boolean();
         }
@@ -665,6 +700,9 @@ public sealed class Emitter
                     break;
                 }
 
+                case BoundElementAssignmentStatement assignment:
+                    EmitElementAssignment(assignment);
+                    break;
                 case BoundExpressionStatement expression:
                 {
                     EmitExpression(expression.Expression);
@@ -979,10 +1017,196 @@ public sealed class Emitter
                     break;
                 }
 
+                case BoundArrayLiteralExpression array:
+                    EmitArrayLiteral(array);
+                    break;
+                case BoundArrayRepeatExpression repeat:
+                    EmitArrayRepeat(repeat);
+                    break;
+                case BoundIndexExpression index:
+                    EmitExpression(index.Array);
+                    EmitExpression(index.Index);
+                    EmitIndexToNativeInt();
+                    EmitLoadElement(index.Type);
+                    Pop(); // Array and index in, element out.
+                    break;
+                case BoundLenExpression len:
+                    // ldlen pushes a native unsigned int; a .NET array length
+                    // always fits i64, so widen unsigned (design §7).
+                    EmitExpression(len.Array);
+                    _il.OpCode(ILOpCode.Ldlen);
+                    _il.OpCode(ILOpCode.Conv_u8);
+                    break;
+
                 default:
                     throw new UnreachableException(
                         $"expression '{expression.GetType().Name}' cannot reach emission");
             }
+        }
+
+        /// <summary>`newarr` then one dup/index/value/stelem sequence per element (spec §4.5).</summary>
+        private void EmitArrayLiteral(BoundArrayLiteralExpression array)
+        {
+            ArithType elementType = array.Type.ElementType!;
+            _il.LoadConstantI4(array.Elements.Length);
+            Push();
+            _il.OpCode(ILOpCode.Newarr);
+            _il.Token(_emitter.GetTypeHandle(elementType)); // Count in, array out.
+            for (int i = 0; i < array.Elements.Length; i++)
+            {
+                _il.OpCode(ILOpCode.Dup);
+                Push();
+                _il.LoadConstantI4(i);
+                Push();
+                EmitExpression(array.Elements[i]);
+                EmitStoreElement(elementType);
+                Pop(3);
+            }
+        }
+
+        /// <summary>
+        /// `[value; count]` (spec §4.5): the one value and the count evaluate
+        /// once, in that order, into temps; `conv.ovf.u` before `newarr`
+        /// makes a negative count fault as OverflowException; a fill loop
+        /// stores the shared value into every slot.
+        /// </summary>
+        private void EmitArrayRepeat(BoundArrayRepeatExpression repeat)
+        {
+            ArithType elementType = repeat.Type.ElementType!;
+
+            // Fresh slots every time: an inner repeat may evaluate while an
+            // outer one's temps are live, so slots cannot be shared by type.
+            int valueSlot = AllocateSlot(elementType);
+            int countSlot = AllocateSlot(ArithType.I64);
+            int arraySlot = AllocateSlot(repeat.Type);
+            int indexSlot = AllocateSlot(ArithType.I64);
+
+            EmitExpression(repeat.Value);
+            _il.StoreLocal(valueSlot);
+            Pop();
+            EmitExpression(repeat.Count);
+            _il.OpCode(ILOpCode.Dup);
+            Push();
+            _il.StoreLocal(countSlot);
+            Pop();
+            _il.OpCode(ILOpCode.Conv_ovf_u);
+            _il.OpCode(ILOpCode.Newarr);
+            _il.Token(_emitter.GetTypeHandle(elementType));
+            _il.StoreLocal(arraySlot);
+            Pop();
+
+            // for (i = 0; i < count; i += 1) array[i] = value;
+            _il.LoadConstantI8(0);
+            Push();
+            _il.StoreLocal(indexSlot);
+            Pop();
+            LabelHandle body = _il.DefineLabel();
+            LabelHandle test = _il.DefineLabel();
+            _il.Branch(ILOpCode.Br, test);
+            _il.MarkLabel(body);
+            _il.LoadLocal(arraySlot);
+            Push();
+            _il.LoadLocal(indexSlot);
+            Push();
+            _il.OpCode(ILOpCode.Conv_i); // 0 <= i < count always fits native int.
+            _il.LoadLocal(valueSlot);
+            Push();
+            EmitStoreElement(elementType);
+            Pop(3);
+            EmitVariableIncrement(indexSlot);
+            _il.MarkLabel(test);
+            _il.LoadLocal(indexSlot);
+            Push();
+            _il.LoadLocal(countSlot);
+            Push();
+            _il.Branch(ILOpCode.Blt, body);
+            Pop(2);
+
+            _il.LoadLocal(arraySlot);
+            Push();
+        }
+
+        /// <summary>
+        /// `array[index] op= value` — array and index evaluate once, into
+        /// temps, before the right-hand side (spec §8.4); a plain `=` needs
+        /// no temps because each evaluates directly in stelem order.
+        /// </summary>
+        private void EmitElementAssignment(BoundElementAssignmentStatement assignment)
+        {
+            if (assignment.CompoundOperator is not { } op)
+            {
+                EmitExpression(assignment.Array);
+                EmitExpression(assignment.Index);
+                EmitIndexToNativeInt();
+                EmitExpression(assignment.Value);
+                EmitStoreElement(assignment.ElementType);
+                Pop(3);
+                return;
+            }
+
+            int arraySlot = AllocateSlot(assignment.Array.Type);
+            int indexSlot = AllocateSlot(ArithType.I64);
+            EmitExpression(assignment.Array);
+            _il.StoreLocal(arraySlot);
+            Pop();
+            EmitExpression(assignment.Index);
+            _il.StoreLocal(indexSlot);
+            Pop();
+
+            // array[i] = array[i] op value — the element read is the start
+            // of the right-hand side, so it precedes the value (spec §8.4).
+            _il.LoadLocal(arraySlot);
+            Push();
+            _il.LoadLocal(indexSlot);
+            Push();
+            EmitIndexToNativeInt();
+            _il.LoadLocal(arraySlot);
+            Push();
+            _il.LoadLocal(indexSlot);
+            Push();
+            EmitIndexToNativeInt();
+            EmitLoadElement(assignment.ElementType);
+            Pop();
+            EmitExpression(assignment.Value);
+            EmitBinaryOperator(op, assignment.ElementType);
+            EmitStoreElement(assignment.ElementType);
+            Pop(3);
+        }
+
+        /// <summary>
+        /// Narrows the i64 index on the stack to the native int the element
+        /// opcodes take; `conv.ovf.i` keeps the checked semantics on 32-bit
+        /// hosts, where an out-of-native-range index cannot silently wrap
+        /// (design §7).
+        /// </summary>
+        private void EmitIndexToNativeInt() => _il.OpCode(ILOpCode.Conv_ovf_i);
+
+        /// <summary>
+        /// The typed ldelem for an element type. Bool loads zero-extended
+        /// (`ldelem.u1`) so a stored 0/1 byte reads back as valid bool;
+        /// strings and nested arrays are object references.
+        /// </summary>
+        private void EmitLoadElement(ArithType elementType)
+        {
+            ILOpCode opCode = elementType == ArithType.Bool ? ILOpCode.Ldelem_u1
+                : elementType == ArithType.I32 ? ILOpCode.Ldelem_i4
+                : elementType == ArithType.I64 ? ILOpCode.Ldelem_i8
+                : elementType == ArithType.F32 ? ILOpCode.Ldelem_r4
+                : elementType == ArithType.F64 ? ILOpCode.Ldelem_r8
+                : ILOpCode.Ldelem_ref;
+            _il.OpCode(opCode);
+        }
+
+        /// <summary>The typed stelem for an element type; bool stores as a byte (`stelem.i1`).</summary>
+        private void EmitStoreElement(ArithType elementType)
+        {
+            ILOpCode opCode = elementType == ArithType.Bool ? ILOpCode.Stelem_i1
+                : elementType == ArithType.I32 ? ILOpCode.Stelem_i4
+                : elementType == ArithType.I64 ? ILOpCode.Stelem_i8
+                : elementType == ArithType.F32 ? ILOpCode.Stelem_r4
+                : elementType == ArithType.F64 ? ILOpCode.Stelem_r8
+                : ILOpCode.Stelem_ref;
+            _il.OpCode(opCode);
         }
 
         private void EmitLiteral(BoundLiteralExpression literal)

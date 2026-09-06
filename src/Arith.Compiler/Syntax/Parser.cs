@@ -181,17 +181,28 @@ public sealed class Parser
     }
 
     // type = "bool" | "i32" | "i64" | "f32" | "f64" | "string" ;
+    // type = { "[]" } , primitive-type ;
     private TypeSyntax ParseType()
     {
+        int start = Current.Span.Start;
+        int arrayDepth = 0;
+        while (Current.Kind == SyntaxKind.OpenBracketToken
+            && Peek(1).Kind == SyntaxKind.CloseBracketToken)
+        {
+            Consume();
+            Consume();
+            arrayDepth++;
+        }
+
         if (SyntaxFacts.IsTypeKeyword(Current.Kind))
         {
             Token keyword = Consume();
-            return new TypeSyntax(keyword, keyword.Span);
+            return new TypeSyntax(keyword, arrayDepth, SpanFrom(start));
         }
 
         ReportUnexpected("a type name");
         Token missing = MissingToken(SyntaxKind.BadToken);
-        return new TypeSyntax(missing, missing.Span);
+        return new TypeSyntax(missing, arrayDepth, SpanFrom(start));
     }
 
     // block = "{" , { statement } , "}" ;
@@ -244,9 +255,10 @@ public sealed class Parser
                 return new ContinueStatementSyntax(SpanFrom(start));
             }
 
-            case SyntaxKind.IdentifierToken when IsAssignmentOperator(Peek(1).Kind):
-                return ParseAssignmentStatement();
             default:
+                // Assignments are recognized after parsing the leading
+                // expression (the target may be an index chain, spec §8.4);
+                // see ParseExpressionStatementOrSkip.
                 return ParseExpressionStatementOrSkip();
         }
     }
@@ -271,17 +283,6 @@ public sealed class Parser
         ExpressionSyntax initializer = ParseExpression();
         MatchToken(SyntaxKind.SemicolonToken);
         return new LetStatementSyntax(identifier, type, initializer, SpanFrom(start));
-    }
-
-    // assignment-statement = identifier , ( "=" | "+=" | "-=" | "*=" | "/=" | "%=" ) , expression , ";" ;
-    private AssignmentStatementSyntax ParseAssignmentStatement()
-    {
-        int start = Current.Span.Start;
-        Token identifier = Consume();
-        Token operatorToken = Consume();
-        ExpressionSyntax value = ParseExpression();
-        MatchToken(SyntaxKind.SemicolonToken);
-        return new AssignmentStatementSyntax(identifier, operatorToken, value, SpanFrom(start));
     }
 
     // return-statement = "return" , [ expression ] , ";" ;
@@ -365,6 +366,23 @@ public sealed class Parser
 
         int start = Current.Span.Start;
         ExpressionSyntax expression = ParseExpression();
+
+        // assignment-statement = assignment-target , op , expression , ";" —
+        // recognized here because the target may be an index chain.
+        if (IsAssignmentOperator(Current.Kind))
+        {
+            Token operatorToken = Consume();
+            ExpressionSyntax value = ParseExpression();
+            MatchToken(SyntaxKind.SemicolonToken);
+            if (expression is not (NameExpressionSyntax or IndexExpressionSyntax or ErrorExpressionSyntax))
+            {
+                _diagnostics.Report(ErrorCodes.InvalidAssignmentTarget, expression.Span);
+                return new ErrorStatementSyntax(SpanFrom(start));
+            }
+
+            return new AssignmentStatementSyntax(expression, operatorToken, value, SpanFrom(start));
+        }
+
         if (expression is not (CallExpressionSyntax or ErrorExpressionSyntax))
         {
             _diagnostics.Report(ErrorCodes.NonCallExpressionStatement, expression.Span);
@@ -379,7 +397,8 @@ public sealed class Parser
             SyntaxKind.IdentifierToken or SyntaxKind.IntegerLiteralToken or
             SyntaxKind.FloatLiteralToken or SyntaxKind.StringLiteralToken or
             SyntaxKind.TrueKeyword or SyntaxKind.FalseKeyword or
-            SyntaxKind.OpenParenToken or SyntaxKind.MinusToken or SyntaxKind.BangToken;
+            SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or
+            SyntaxKind.MinusToken or SyntaxKind.BangToken;
 
     /// <summary>Skips past a `;` or up to (not past) a token that can begin the next statement.</summary>
     private void SkipToStatementBoundary()
@@ -420,7 +439,7 @@ public sealed class Parser
         }
         else
         {
-            left = ParsePrimaryExpression();
+            left = ParsePostfixExpression();
         }
 
         while (true)
@@ -451,7 +470,23 @@ public sealed class Parser
         _ => 0,
     };
 
-    // primary = literal | call-expression | identifier | "(" , expression , ")" ;
+    // postfix = primary , { "[" , expression , "]" } ;
+    private ExpressionSyntax ParsePostfixExpression()
+    {
+        int start = Current.Span.Start;
+        ExpressionSyntax expression = ParsePrimaryExpression();
+        while (Current.Kind == SyntaxKind.OpenBracketToken)
+        {
+            Consume();
+            ExpressionSyntax index = ParseExpression();
+            MatchToken(SyntaxKind.CloseBracketToken);
+            expression = new IndexExpressionSyntax(expression, index, SpanFrom(start));
+        }
+
+        return expression;
+    }
+
+    // primary = literal | array-expression | call-expression | identifier | "(" , expression , ")" ;
     private ExpressionSyntax ParsePrimaryExpression()
     {
         switch (Current.Kind)
@@ -483,6 +518,9 @@ public sealed class Parser
                 return new ParenthesizedExpressionSyntax(expression, SpanFrom(start));
             }
 
+            case SyntaxKind.OpenBracketToken:
+                return ParseArrayExpression();
+
             default:
                 return ParseErrorExpression();
         }
@@ -504,12 +542,51 @@ public sealed class Parser
 
         if (Current.Kind is not (SyntaxKind.SemicolonToken or SyntaxKind.CloseParenToken or
             SyntaxKind.CloseBraceToken or SyntaxKind.CommaToken or SyntaxKind.EndOfFileToken or
-            SyntaxKind.OpenBraceToken or SyntaxKind.DotDotToken or SyntaxKind.DotDotEqualsToken))
+            SyntaxKind.OpenBraceToken or SyntaxKind.DotDotToken or SyntaxKind.DotDotEqualsToken or
+            SyntaxKind.CloseBracketToken))
         {
             span = Consume().Span;
         }
 
         return new ErrorExpressionSyntax(span);
+    }
+
+    // array-expression = "[" , [ expression , { "," , expression } ] , "]"
+    //                  | "[" , expression , ";" , expression , "]" ;
+    private ExpressionSyntax ParseArrayExpression()
+    {
+        int start = Consume().Span.Start;
+        if (Current.Kind == SyntaxKind.CloseBracketToken)
+        {
+            Consume();
+            return new ArrayLiteralExpressionSyntax([], SpanFrom(start));
+        }
+
+        ExpressionSyntax first = ParseExpression();
+        if (Current.Kind == SyntaxKind.SemicolonToken)
+        {
+            Consume();
+            ExpressionSyntax count = ParseExpression();
+            MatchToken(SyntaxKind.CloseBracketToken);
+            return new ArrayRepeatExpressionSyntax(first, count, SpanFrom(start));
+        }
+
+        ImmutableArray<ExpressionSyntax>.Builder elements = ImmutableArray.CreateBuilder<ExpressionSyntax>();
+        elements.Add(first);
+        while (Current.Kind == SyntaxKind.CommaToken)
+        {
+            Token comma = Consume();
+            if (Current.Kind == SyntaxKind.CloseBracketToken)
+            {
+                _diagnostics.Report(ErrorCodes.TrailingComma, comma.Span);
+                break;
+            }
+
+            elements.Add(ParseExpression());
+        }
+
+        MatchToken(SyntaxKind.CloseBracketToken);
+        return new ArrayLiteralExpressionSyntax(elements.ToImmutable(), SpanFrom(start));
     }
 
     // call-expression = ( identifier | type ) , "(" , [ argument-list ] , ")" ;
