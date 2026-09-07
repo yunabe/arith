@@ -33,5 +33,5 @@ fn main(limit: i64) {
             count += 1;
         }
     }
-    print(string(count) + " primes up to " + string(limit) + " (sieve)");
+    print(f"${count} primes up to ${limit} (sieve)");
 }

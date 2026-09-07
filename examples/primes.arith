@@ -22,5 +22,5 @@ fn main(limit: i64) {
             count += 1;
         }
     }
-    print(string(count) + " primes up to " + string(limit));
+    print(f"${count} primes up to ${limit}");
 }

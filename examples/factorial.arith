@@ -10,5 +10,5 @@ fn factorial(n: i64) -> i64 {
 }
 
 fn main(n: i64) {
-    print(string(n) + "! = " + string(factorial(n)));
+    print(f"${n}! = ${factorial(n)}");
 }

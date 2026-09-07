@@ -17,5 +17,5 @@ fn collatz_steps(start: i64) -> i64 {
 }
 
 fn main(start: i64) {
-    print("collatz(" + string(start) + ") reaches 1 after " + string(collatz_steps(start)) + " steps");
+    print(f"collatz(${start}) reaches 1 after ${collatz_steps(start)} steps");
 }

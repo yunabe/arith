@@ -16,15 +16,15 @@ fn format(values: []i64) -> string {
     let result = "[";
     let separator = "";
     for value in values {
-        result += separator + string(value);
+        result += f"${separator}${value}";
         separator = ", ";
     }
-    return result + "]";
+    return f"${result}]";
 }
 
 fn main() {
     let values = [7, -3, 11, 2, 0, 5, 2, -9];
-    print("before: " + format(values));
+    print(f"before: ${format(values)}");
     insertion_sort(values);
-    print("after:  " + format(values));
+    print(f"after:  ${format(values)}");
 }

@@ -13,5 +13,5 @@ fn sum(n: i64, acc: i64) -> i64 {
 }
 
 fn main(n: i64) {
-    print("sum(1..=" + string(n) + ") = " + string(sum(n, 0)));
+    print(f"sum(1..=${n}) = ${sum(n, 0)}");
 }

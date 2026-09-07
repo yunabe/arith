@@ -18,5 +18,5 @@ fn power(base: i64, exp: i64) -> i64 {
 }
 
 fn main(base: i64, exp: i64) {
-    print(string(base) + "^" + string(exp) + " = " + string(power(base, exp)));
+    print(f"${base}^${exp} = ${power(base, exp)}");
 }

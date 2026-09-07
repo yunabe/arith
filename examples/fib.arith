@@ -8,5 +8,5 @@ fn fib(n: i64) -> i64 {
 }
 
 fn main(n: i64) {
-    print("fib(" + string(n) + ") = " + string(fib(n)));
+    print(f"fib(${n}) = ${fib(n)}");
 }

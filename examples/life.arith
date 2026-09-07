@@ -77,11 +77,11 @@ fn main() {
     grid[3][3] = true;
 
     for generation in 0..=4 {
-        print("generation " + string(generation));
+        print(f"generation ${generation}");
         print_grid(grid);
         if generation < 4 {
             grid = next_generation(grid);
         }
     }
-    print("population after 4 generations = " + string(population(grid)));
+    print(f"population after 4 generations = ${population(grid)}");
 }

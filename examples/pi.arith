@@ -14,5 +14,5 @@ fn nilakantha(terms: i64) -> f64 {
 }
 
 fn main(terms: i64) {
-    print("pi ~= " + string(nilakantha(terms)) + "  (" + string(terms) + " terms)");
+    print(f"pi ~= ${nilakantha(terms)}  (${terms} terms)");
 }
