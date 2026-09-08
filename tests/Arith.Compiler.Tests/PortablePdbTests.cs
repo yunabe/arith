@@ -16,6 +16,7 @@ public sealed class PortablePdbTests
     {
         EmitResult result = Compilation.Create(SyntaxTree.Parse(source)).Emit("symbols", debug);
         Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        IlVerification.AssertValid(result.PeImage);
         return result;
     }
 

@@ -426,6 +426,14 @@ Diagnostics keep the CLI argument's original spelling.
   `dotnet` host, assert stdout and exit code — in `Arith.Cli.Tests`, reusing
   `CliRunner`/`ProcessRunner`. Cover the runtime-error contract too (overflow,
   division by zero, bad conversions → nonzero exit, message on stderr).
+- **Generated IL**: use `Microsoft.ILVerification` in compiler tests to
+  verify all method bodies and type definitions without executing the image.
+  Cover every example and focused type/control-flow cases in normal and debug
+  modes, including the generated bridge and uncalled functions. Resolve framework
+  references from the test process's runtime directory. Deliberately corrupted
+  method bodies prove that stack underflow, wrong return types, and understated
+  `maxStack` fail verification. This complements the runtime semantics tests;
+  verifiable IL can still compute an incorrect result.
 - Spec §11's evaluation-order guarantees get targeted end-to-end tests
   (side-effecting call order in arguments and operands), and so does the
   closed-range endpoint rule — e.g.

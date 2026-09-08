@@ -189,6 +189,13 @@ dotnet test                                    # run the test suite
 dotnet run --project src/Arith.Cli -- version  # run the CLI
 ```
 
+`dotnet test` also verifies generated assemblies with the official
+[ILVerify library](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerification).
+It checks every emitted method, including unused functions and the entry-point
+bridge, across all examples and focused cases in normal and `--debug` modes.
+The verifier is a test-only NuGet dependency; no global tool installation is
+needed. See the [verification notes](docs/il-emission-notes.md#9-verifying-generated-il).
+
 The `version` command prints the CLI version:
 
 ```text
