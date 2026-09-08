@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 
 using Arith.Compiler.Syntax;
+using Arith.Compiler.Text;
 
 namespace Arith.Compiler.Binding;
 
@@ -10,7 +11,14 @@ namespace Arith.Compiler.Binding;
 /// The emitter consumes only these nodes. Like the syntax tree, consumers
 /// switch on concrete node types with an explicit fallback that throws.
 /// </summary>
-public abstract record BoundNode;
+public abstract record BoundNode
+{
+    /// <summary>
+    /// The originating source range; null for compiler-generated nodes.
+    /// Containers retain ranges for uniformity, even when they emit no instructions.
+    /// </summary>
+    public TextSpan? Span { get; init; }
+}
 
 /// <summary>A whole bound program: one body per (uniquely named) function, plus the entry point.</summary>
 public sealed record BoundProgram(

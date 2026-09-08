@@ -6,6 +6,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 
 using Arith.Compiler.Binding;
+using Arith.Compiler.Text;
 
 namespace Arith.Compiler.Emit;
 
@@ -33,6 +34,8 @@ public sealed class Emitter
     private readonly MetadataBuilder _metadata = new();
     private readonly BlobBuilder _ilStream = new();
     private readonly MethodBodyStreamEncoder _bodyStream;
+    private readonly PortablePdbEmitter _debug;
+    private readonly bool _debugMode;
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, TypeReferenceHandle> _primitiveTypeRefs = [];
     private readonly Dictionary<ArithType, TypeSpecificationHandle> _typeSpecs = [];
@@ -51,17 +54,25 @@ public sealed class Emitter
     private MemberReferenceHandle _textWriterWriteLine;
     private TypeReferenceHandle _objectType;
 
-    private Emitter() => _bodyStream = new MethodBodyStreamEncoder(_ilStream);
+    private Emitter(SourceText source, string assemblyName, bool debug)
+    {
+        _bodyStream = new MethodBodyStreamEncoder(_ilStream);
+        _debug = new PortablePdbEmitter(source, assemblyName);
+        _debugMode = debug;
+    }
 
-    /// <summary>Emits the PE image for an error-free bound program.</summary>
-    public static ImmutableArray<byte> Emit(BoundProgram program, string assemblyName)
+    /// <summary>Emits matching PE and Portable PDB images for an error-free bound program.</summary>
+    public static (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) Emit(
+        BoundProgram program, string assemblyName, SourceText source, bool debug = false)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentException.ThrowIfNullOrEmpty(assemblyName);
-        return new Emitter().EmitProgram(program, assemblyName);
+        ArgumentNullException.ThrowIfNull(source);
+        return new Emitter(source, assemblyName, debug).EmitProgram(program, assemblyName, debug);
     }
 
-    private ImmutableArray<byte> EmitProgram(BoundProgram program, string assemblyName)
+    private (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) EmitProgram(
+        BoundProgram program, string assemblyName, bool debug)
     {
         Debug.Assert(program.EntryPoint is not null, "an error-free program has an entry point");
         Debug.Assert(!program.Functions.IsEmpty, "an error-free program has at least main");
@@ -72,7 +83,7 @@ public sealed class Emitter
             mvid: _metadata.GetOrAddGuid(Guid.NewGuid()),
             encId: default,
             encBaseId: default);
-        _metadata.AddAssembly(
+        AssemblyDefinitionHandle assembly = _metadata.AddAssembly(
             name: _metadata.GetOrAddString(assemblyName),
             version: new Version(1, 0, 0, 0),
             culture: default,
@@ -80,7 +91,7 @@ public sealed class Emitter
             flags: 0,
             hashAlgorithm: AssemblyHashAlgorithm.Sha1);
 
-        AddRuntimeReferences();
+        AddRuntimeReferences(assembly, debug);
 
         // Layout pass (design §4.5): predict every function's MethodDef row
         // before writing bodies, in declaration order.
@@ -129,6 +140,7 @@ public sealed class Emitter
         // the string[] and enforces spec §5.1 — including a parameterless
         // main, which must still reject any argument with the usage message.
         int bridgeOffset = EmitEntryPointBridgeBody(program.EntryPoint!, assemblyName);
+        _debug.AddMethod(default, []);
         ParameterHandle bridgeParameter = MetadataTokens.ParameterHandle(parameterRow);
         _metadata.AddParameter(
             ParameterAttributes.None, _metadata.GetOrAddString("args"), sequenceNumber: 1);
@@ -162,21 +174,48 @@ public sealed class Emitter
             fieldList: MetadataTokens.FieldDefinitionHandle(1),
             methodList: MetadataTokens.MethodDefinitionHandle(1));
 
+        DebugDirectoryBuilder debugDirectory = new();
+        ImmutableArray<byte> pdbImage = _debug.Serialize(
+            _metadata.GetRowCounts(), entryPoint, assemblyName + ".pdb", debugDirectory);
         ManagedPEBuilder peBuilder = new(
             PEHeaderBuilder.CreateExecutableHeader(),
             new MetadataRootBuilder(_metadata),
             _ilStream,
+            debugDirectoryBuilder: debugDirectory,
             entryPoint: entryPoint,
             flags: CorFlags.ILOnly);
         BlobBuilder peBlob = new();
         peBuilder.Serialize(peBlob);
-        return [.. peBlob.ToArray()];
+        return ([.. peBlob.ToArray()], pdbImage);
     }
 
-    private void AddRuntimeReferences()
+    private void AddRuntimeReferences(AssemblyDefinitionHandle assembly, bool debug)
     {
         AssemblyReferenceHandle systemRuntime = AddFrameworkReference("System.Runtime");
         AssemblyReferenceHandle systemConsole = AddFrameworkReference("System.Console");
+
+        if (debug)
+        {
+            // DebuggableAttribute(true, true) is Default | DisableOptimizations.
+            // PDBs alone cannot prevent shared throw helpers or inlining from
+            // losing the fault's IL location and its Arith call frames.
+            TypeReferenceHandle attribute = AddTypeReference(systemRuntime, "System.Diagnostics", "DebuggableAttribute");
+            MemberReferenceHandle constructor = _metadata.AddMemberReference(
+                attribute, _metadata.GetOrAddString(".ctor"),
+                MethodSignature(
+                    isInstanceMethod: true, returnType: r => r.Void(), parameterCount: 2,
+                    parameters: p =>
+                    {
+                        p.AddParameter().Type().Boolean();
+                        p.AddParameter().Type().Boolean();
+                    }));
+            BlobBuilder value = new();
+            value.WriteUInt16(1); // Custom-attribute prolog.
+            value.WriteBoolean(true); // isJITTrackingEnabled.
+            value.WriteBoolean(true); // isJITOptimizerDisabled.
+            value.WriteUInt16(0); // No named arguments.
+            _metadata.AddCustomAttribute(assembly, constructor, _metadata.GetOrAddBlob(value));
+        }
 
         _objectType = AddTypeReference(systemRuntime, "System", "Object");
         TypeReferenceHandle console = AddTypeReference(systemConsole, "System", "Console");
@@ -519,6 +558,7 @@ public sealed class Emitter
 
         // maxStack is the tracked true depth, never the tiny-header default
         // (docs/il-emission-notes.md §4).
+        _debug.AddMethod(localSignature, body.SequencePoints);
         return _bodyStream.AddMethodBody(il, body.MaxStack, localVariablesSignature: localSignature);
     }
 
@@ -652,11 +692,35 @@ public sealed class Emitter
         private readonly Dictionary<ArithType, int> _printTemps = [];
         private readonly List<(LabelHandle ContinueTarget, LabelHandle BreakTarget)> _loops = [];
         private int _depth;
+        private TextSpan? _sourceSpan;
 
         /// <summary>The type of each local slot, in slot order (lets first-come, then print temps).</summary>
         public List<ArithType> LocalTypes { get; } = [];
 
         public int MaxStack { get; private set; }
+
+        public List<SourceSequencePoint> SequencePoints { get; } = [];
+
+        private void MarkSequencePoint(TextSpan? span, bool emitBoundary = false)
+        {
+            // Pending points own the next instruction. In optimized output,
+            // nested nodes at the same offset keep only the innermost range.
+            if (SequencePoints.Count > 0 && SequencePoints[^1].Offset == _il.Offset)
+            {
+                SequencePoints.RemoveAt(SequencePoints.Count - 1);
+            }
+
+            if (SequencePoints.Count == 0 || SequencePoints[^1].Span != span)
+            {
+                SequencePoints.Add(new SourceSequencePoint(_il.Offset, span));
+                if (emitBoundary && span is not null)
+                {
+                    // In debug mode, preserve an IL boundary even with values
+                    // on the stack (e.g. between a repeat count and conv.ovf.u).
+                    _il.OpCode(ILOpCode.Nop);
+                }
+            }
+        }
 
         public void Emit(BoundFunction function)
         {
@@ -666,7 +730,15 @@ public sealed class Emitter
                 Debug.Assert(
                     function.Symbol.ReturnType == ArithType.Void,
                     "the binder guarantees value-returning functions contain a return");
+                MarkSequencePoint(null);
                 _il.OpCode(ILOpCode.Ret);
+            }
+
+            // Restoring the enclosing source scope can leave a pending point
+            // after an explicit return. It owns no instruction and is omitted.
+            if (SequencePoints.Count > 0 && SequencePoints[^1].Offset == _il.Offset)
+            {
+                SequencePoints.RemoveAt(SequencePoints.Count - 1);
             }
         }
 
@@ -687,10 +759,24 @@ public sealed class Emitter
         /// <summary>Emits one statement; true when it definitely returned.</summary>
         private bool EmitStatement(BoundStatement statement)
         {
+            if (statement is BoundBlock block)
+            {
+                return EmitBlock(block);
+            }
+
+            TextSpan? enclosing = _sourceSpan;
+            _sourceSpan = statement.Span;
+            MarkSequencePoint(_sourceSpan, emitBoundary: _emitter._debugMode);
+            bool returned = EmitStatementCore(statement);
+            _sourceSpan = enclosing;
+            MarkSequencePoint(enclosing);
+            return returned;
+        }
+
+        private bool EmitStatementCore(BoundStatement statement)
+        {
             switch (statement)
             {
-                case BoundBlock block:
-                    return EmitBlock(block);
                 case BoundLetStatement let:
                 {
                     EmitExpression(let.Initializer);
@@ -806,6 +892,7 @@ public sealed class Emitter
         /// <summary>Test-at-top loop: `br TEST; BODY: body; TEST: cond; brtrue BODY`.</summary>
         private void EmitWhileStatement(BoundWhileStatement loop)
         {
+            MarkSequencePoint(null);
             LabelHandle body = _il.DefineLabel();
             LabelHandle test = _il.DefineLabel();
             LabelHandle exit = _il.DefineLabel();
@@ -840,6 +927,7 @@ public sealed class Emitter
             _il.StoreLocal(endSlot);
             Pop();
 
+            MarkSequencePoint(null);
             LabelHandle body = _il.DefineLabel();
             LabelHandle exit = _il.DefineLabel();
             if (!loop.IsInclusive)
@@ -878,6 +966,7 @@ public sealed class Emitter
                 EmitStatement(loop.Body);
                 _loops.RemoveAt(_loops.Count - 1);
                 _il.MarkLabel(check);
+                MarkSequencePoint(null);
                 _il.LoadLocal(variableSlot);
                 Push();
                 _il.LoadLocal(endSlot);
@@ -907,6 +996,7 @@ public sealed class Emitter
 
             // Spec §9.3: the array expression evaluates once, before the loop.
             EmitExpression(loop.Array);
+            MarkSequencePoint(null);
             _il.OpCode(ILOpCode.Dup);
             Push();
             _il.StoreLocal(arraySlot);
@@ -954,6 +1044,7 @@ public sealed class Emitter
         /// <summary>`i = i + 1` with a plain add — callers guarantee `i &lt; end` here.</summary>
         private void EmitVariableIncrement(int slot)
         {
+            MarkSequencePoint(null);
             _il.LoadLocal(slot);
             Push();
             _il.LoadConstantI8(1);
@@ -1017,6 +1108,18 @@ public sealed class Emitter
         }
 
         private void EmitExpression(BoundExpression expression)
+        {
+            // Every operand restores its parent's source scope before the
+            // parent emits its own instructions, including checked operations.
+            TextSpan? enclosing = _sourceSpan;
+            _sourceSpan = expression.Span;
+            MarkSequencePoint(_sourceSpan, emitBoundary: _emitter._debugMode);
+            EmitExpressionCore(expression);
+            _sourceSpan = enclosing;
+            MarkSequencePoint(enclosing, emitBoundary: _emitter._debugMode);
+        }
+
+        private void EmitExpressionCore(BoundExpression expression)
         {
             switch (expression)
             {
@@ -1176,6 +1279,7 @@ public sealed class Emitter
             Pop();
 
             // for (i = 0; i < count; i += 1) array[i] = value;
+            MarkSequencePoint(null);
             _il.LoadConstantI8(0);
             Push();
             _il.StoreLocal(indexSlot);
@@ -1202,6 +1306,7 @@ public sealed class Emitter
             _il.Branch(ILOpCode.Blt, body);
             Pop(2);
 
+            MarkSequencePoint(repeat.Span);
             _il.LoadLocal(arraySlot);
             Push();
         }

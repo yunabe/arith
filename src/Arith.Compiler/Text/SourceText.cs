@@ -1,3 +1,7 @@
+using System.Collections.Immutable;
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Arith.Compiler.Text;
 
 /// <summary>
@@ -8,6 +12,7 @@ public sealed class SourceText
 {
     private readonly string _text;
     private int[]? _lineStarts;
+    private ImmutableArray<byte> _checksum;
 
     private SourceText(string text, string filePath)
     {
@@ -15,13 +20,45 @@ public sealed class SourceText
         FilePath = filePath;
     }
 
+    /// <summary>The caller-supplied document name, preserved verbatim in the PDB.</summary>
     public string FilePath { get; }
 
     public int Length => _text.Length;
 
     public char this[int index] => _text[index];
 
+    /// <summary>
+    /// Creates an in-memory source, using UTF-8 without a BOM for its checksum.
+    /// For files, use <see cref="FromBytes"/> to hash their original encoding and BOM.
+    /// The supplied path is a document name and is preserved verbatim during emission.
+    /// </summary>
     public static SourceText From(string text, string filePath = "") => new(text, filePath);
+
+    /// <summary>
+    /// Decodes source with the same BOM detection as File.ReadAllText, while
+    /// retaining the hash of the exact input bytes for Portable PDB documents.
+    /// In particular, a UTF-8 BOM contributes to the hash but not source columns.
+    /// </summary>
+    public static SourceText FromBytes(byte[] bytes, string filePath = "")
+    {
+        using MemoryStream stream = new(bytes, writable: false);
+        using StreamReader reader = new(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return new SourceText(reader.ReadToEnd(), filePath) { _checksum = [.. SHA256.HashData(bytes)] };
+    }
+
+    /// <summary>SHA-256 of input bytes, or of UTF-8 without BOM for a source created from a string.</summary>
+    public ImmutableArray<byte> Checksum
+    {
+        get
+        {
+            if (_checksum.IsDefault)
+            {
+                _checksum = [.. SHA256.HashData(Encoding.UTF8.GetBytes(_text))];
+            }
+
+            return _checksum;
+        }
+    }
 
     public string ToString(TextSpan span) => _text.Substring(span.Start, span.Length);
 

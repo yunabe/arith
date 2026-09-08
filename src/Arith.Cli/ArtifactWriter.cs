@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 namespace Arith.Cli;
 
 /// <summary>
-/// Turns an emitted PE image into on-disk artifacts: the assembly, the
+/// Turns emitted PE and PDB images into on-disk artifacts: the assembly, its symbols, the
 /// runtimeconfig naming the shared framework for the `dotnet` host, and
 /// convenience launchers. The compiler library never writes files itself
 /// (design §4.6); every packaging mode consumes the same emitted bytes.
@@ -29,16 +29,18 @@ internal static class ArtifactWriter
         Path.Combine(outputDirectory, name + ".runtimeconfig.json"),
         Path.Combine(outputDirectory, name),
         Path.Combine(outputDirectory, name + ".cmd"),
+        Path.Combine(outputDirectory, name + ".pdb"),
     ];
 
     /// <summary>Writes the program's files into <paramref name="outputDirectory"/> and returns their paths.</summary>
     internal static IReadOnlyList<string> Write(
-        string outputDirectory, string name, ImmutableArray<byte> peImage)
+        string outputDirectory, string name, ImmutableArray<byte> peImage, ImmutableArray<byte> pdbImage)
     {
         Directory.CreateDirectory(outputDirectory);
         IReadOnlyList<string> paths = PlannedPaths(outputDirectory, name);
         string assemblyPath = paths[0];
         File.WriteAllBytes(assemblyPath, [.. peImage]);
+        File.WriteAllBytes(paths[4], [.. pdbImage]);
         File.WriteAllText(paths[1], RuntimeConfigJsonTemplate + Environment.NewLine);
 
         // The launchers derive the dll path from their own location instead

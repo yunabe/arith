@@ -1,9 +1,26 @@
+using System.Security.Cryptography;
+using System.Text;
+
 using Arith.Compiler.Text;
 
 namespace Arith.Compiler.Tests;
 
 public sealed class SourceTextTests
 {
+    [Fact]
+    public void FromBytes_ExcludesBomFromPositionsButIncludesItInChecksum()
+    {
+        const string code = "fn main() { print(\"日本語\"); }\r\n";
+        byte[] bytes = [0xef, 0xbb, 0xbf, .. Encoding.UTF8.GetBytes(code)];
+        SourceText text = SourceText.FromBytes(bytes, "test.arith");
+
+        Assert.Equal(code, text.ToString());
+        Assert.Equal("test.arith", text.FilePath);
+        Assert.Equal(new LinePosition(1, 1), text.GetLinePosition(0));
+        Assert.Equal(SHA256.HashData(bytes), text.Checksum.ToArray());
+        Assert.Equal(SHA256.HashData(Encoding.UTF8.GetBytes(code)), SourceText.From(code).Checksum.ToArray());
+    }
+
     [Theory]
     [InlineData(0, 1, 1)]
     [InlineData(2, 1, 3)]  // The "\n" itself still belongs to line 1.

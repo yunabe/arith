@@ -271,7 +271,80 @@ and takes seconds); run it with:
 dotnet test --project tests/Arith.Cli.Tests -- --explicit on
 ```
 
-## 7. Inspecting the output
+## 7. Portable PDB and source locations
+
+The PE tells the runtime **what to execute**. A Portable PDB adds the
+correspondence between **IL offsets and source ranges**, without changing the
+language or translating through C#. `arith build` now writes a matching
+`<name>.pdb`, and `arith run` keeps that PDB beside its temporary assembly.
+The runtime can use it when formatting exception stack traces.
+
+The source mapping passes through three stages:
+
+1. `Binder` copies each syntax span onto its bound node and preserves spans
+   when it resolves pending literals. Positions are offsets in the decoded
+   UTF-16 text, just as for compile-time diagnostics.
+2. `FunctionBodyEmitter` records `InstructionEncoder.Offset` with the current
+   source span. The expression and statement entry/exit wrappers manage a
+   source scope: every operand restores its parent's span before the parent
+   emits another instruction, including `conv.ovf.u` for array repeat counts.
+   For a multiline `10 / 0`, the
+   `div` instruction therefore maps to the division, not just the `0`.
+   Points at the same offset are replaced, and consecutive identical ranges
+   are coalesced. Generated loop increments, array-fill loops, and implicit
+   returns have hidden points; the generated `<Main>` bridge has no source.
+   Optimized output may replace a statement's entry point with its first
+   operand's point, so this map does not promise statement-by-statement stepping.
+3. `PortablePdbEmitter` builds the PDB metadata and links it from the PE:
+
+   | Record | Purpose |
+   | --- | --- |
+   | `Document` | Caller-supplied document name and SHA-256 checksum of the original bytes, including any BOM. The CLI resolves its input path to an absolute name; the library preserves names verbatim. String inputs use UTF-8 without a BOM. An empty name falls back to `<assembly-name>.arith`. |
+   | `MethodDebugInformation` | One row per PE `MethodDef`, including an empty row for the bridge; contains the method's sequence-point blob. |
+   | Sequence-point blob | Local-signature row number, then IL-offset deltas and source ranges. Hidden points encode zero line/column deltas. |
+   | PE CodeView entry | Sibling PDB filename and the content ID returned by `PortablePdbBuilder.Serialize`. |
+   | PE PDB checksum entry | SHA-256 of the serialized PDB bytes. |
+
+IL offsets must increase, but source lines need not: a `while` condition is
+emitted *after* its body. The blob therefore uses unsigned IL-offset deltas
+and signed source-position deltas after the first visible point. Tests read
+the blobs back with `MetadataReader` to check both directions, local-signature
+references, and the PE/PDB IDs. Very long lines have their columns clamped
+below the metadata reader's 16-bit limit; unrepresentable line numbers become
+hidden points. The format is specified in the runtime's
+[Portable PDB metadata specification](https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md).
+
+Keep the `.dll` and its matching `.pdb` together when distributing managed
+output. The `.arith` source does not have to exist to format a stack trace;
+it is needed to view source in a debugger and is not embedded in the PDB.
+No other language's debugger GUID is assigned to Arith, and local-variable
+scopes, source embedding, and expression evaluation are not implemented.
+
+JIT optimization stays enabled by default. Shared throw-helper blocks can map
+division, bounds-check, and overflow faults to the function's first statement,
+even if the failure is several lines later. Inlining can also remove frames.
+Portable PDB emission alone cannot correct those native-to-IL mappings.
+
+`arith build --debug` and `arith run --debug` emit the assembly attribute
+`DebuggableAttribute(true, true)`, equivalent to `Default | DisableOptimizations`
+([.NET constructor documentation](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.debuggableattribute.-ctor?view=net-10.0)).
+The emitter also inserts `nop` boundaries at visible statement/expression
+entries and when an operand restores its parent. These boundaries let the
+debug JIT distinguish an operation from its last operand even when the IL
+stack is nonempty. Pending source-scope restores after a final `ret` are
+discarded; no sequence point is allowed beyond the method's instructions.
+The debug tests check faults after earlier statements, a multiline negative
+repeat count, a loop condition after its body has run, and both callee and
+caller frames with tiered compilation disabled.
+
+The compiler library never resolves document names against the process CWD
+or validates them as filesystem paths. The CLI supplies absolute names while
+keeping the original argument spelling for compile-time diagnostics.
+NativeAOT debug information also needs to pass through ILC into platform-native
+symbols. That packaging is separate work: `--aot` still exports only the native
+executable, and `--debug --aot` is rejected.
+
+## 8. Inspecting the output
 
 Useful tools to look at the generated file:
 

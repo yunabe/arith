@@ -34,6 +34,166 @@ public sealed class BuildRunCommandTests : IDisposable
     private static string[] Lines(string text) =>
         [.. text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.TrimEnd('\r'))];
 
+    [Theory]
+    [InlineData("print(10 / 0);", "DivideByZeroException")]
+    [InlineData("print(9223372036854775807 + 1);", "OverflowException")]
+    [InlineData("print([1][2]);", "IndexOutOfRangeException")]
+    [InlineData("print(i64(\"invalid\"));", "FormatException")]
+    [InlineData("print(f\"result: ${10 / 0}\");", "DivideByZeroException")]
+    public void Run_RuntimeExceptionIncludesOriginalSourceLine(string statement, string exceptionName)
+    {
+        string source = WriteSource("fault.arith", "fn main() {\n    " + statement + "\n}\n");
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(exceptionName, result.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 2", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_OptimizedCallExceptionIncludesANonFirstSourceLine()
+    {
+        string source = WriteSource("parse.arith", """
+            fn main() {
+                let text = "invalid";
+                print("before conversion");
+
+                print(i64(text));
+            }
+            """);
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("FormatException", result.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 5", result.Error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("let x = 10; let y = 0;", "print(x / y);", "DivideByZeroException")]
+    [InlineData("let x = 9223372036854775807; let y = 1;", "print(x + y);", "OverflowException")]
+    [InlineData("let a = [1]; let i = 2;", "print(a[i]);", "IndexOutOfRangeException")]
+    [InlineData("let n = -1;", "let a = [0;\n        n];", "OverflowException")]
+    [InlineData("let n = 9223372036854775807;", "print(i32(n));", "OverflowException")]
+    [InlineData("let n = -9223372036854775808;", "print(-n);", "OverflowException")]
+    [InlineData("let a = [10]; let n = 0;", "a[0] /= n;", "DivideByZeroException")]
+    public void Run_DebugFaultsIncludeTheFaultingStatementLine(
+        string declarations, string statement, string exceptionName)
+    {
+        string source = WriteSource("fault.arith",
+            "fn main() {\n    " + declarations + "\n    print(\"before fault\");\n\n    " + statement + "\n}\n");
+
+        CliResult result = CliRunner.Run("run", "--debug", source);
+
+        Assert.Equal(["before fault"], Lines(result.Output));
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(exceptionName, result.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 5", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_DebugWhileFaultIncludesConditionLineAfterExecutingBody()
+    {
+        string source = WriteSource("loop.arith", """
+            fn main() {
+                let n = 1;
+                while 10 / n > 0 {
+                    print(n);
+                    n -= 1;
+                }
+            }
+            """);
+        CliResult result = CliRunner.Run("run", "--debug", source);
+
+        Assert.Equal(["1"], Lines(result.Output));
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains("DivideByZeroException", result.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 3", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_DebugPreservesCalleeAndMultilineCallSiteWithoutTieredCompilation()
+    {
+        string source = WriteSource("calls.arith", """
+            fn divide(a: i64, b: i64) -> i64 {
+                print("callee");
+                return a / b;
+            }
+            fn main(n: i64) {
+                print("caller");
+                print(divide(10,
+                    n));
+            }
+            """);
+        string output = Path.Combine(_directory, "out");
+        CliResult build = CliRunner.Run("build", "--debug", source, "-o", output);
+        Assert.Equal(0, build.ExitCode);
+        ProcessStartInfo start = new("dotnet", [Path.Combine(output, "calls.dll"), "0"]);
+        start.Environment["DOTNET_TieredCompilation"] = "0";
+        ProcessResult run = ProcessRunner.Run(start);
+
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Equal(["caller", "callee"], Lines(run.Output));
+        Assert.Contains("Program.divide(Int64 a, Int64 b) in " + source + ":line 3", run.Error, StringComparison.Ordinal);
+        Assert.Contains("Program.main(Int64 n) in " + source + ":line 7", run.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_DebugWithAotFailsBeforeProducingArtifacts()
+    {
+        string source = WriteSource("hello.arith", "fn main() { }");
+        string output = Path.Combine(_directory, "out");
+        CliResult result = CliRunner.Run("build", source, "--debug", "--aot", "-o", output);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("--debug cannot be combined with --aot", result.Error, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(output));
+    }
+
+    [Fact]
+    public void Run_DoubleDashStillForwardsDebugAsAProgramArgument()
+    {
+        string source = WriteSource("args.arith", "fn main(args: []string) { print(args[0]); }");
+        CliResult result = CliRunner.Run("run", source, "--", "--debug");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["--debug"], Lines(result.Output));
+    }
+
+    [Theory]
+    [InlineData("build")]
+    [InlineData("run")]
+    public void RelativeSourcePath_KeepsItsOriginalSpellingInDiagnostics(string command)
+    {
+        string source = WriteSource("invalid.arith", "fn main() { print(missing); }");
+        string relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), source);
+        CliResult result = CliRunner.Run(command, relative);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.StartsWith(relative + ":1:", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_MovedArtifactsRetainSourceLocationsWithoutTheSourceFile()
+    {
+        string source = WriteSource("fault.arith", "fn main(n: i64) {\n    print(n);\n    print(10 / n);\n}\n");
+        string output = Path.Combine(_directory, "out");
+        string moved = Path.Combine(_directory, "moved");
+        string relativeSource = Path.GetRelativePath(Directory.GetCurrentDirectory(), source);
+        CliResult build = CliRunner.Run("build", "--debug", relativeSource, "-o", output);
+        Assert.Equal(0, build.ExitCode);
+        Assert.True(File.Exists(Path.Combine(output, "fault.pdb")));
+        Directory.Move(output, moved);
+        File.Delete(source);
+
+        ProcessResult run = ProcessRunner.Run(new ProcessStartInfo(
+            "dotnet", [Path.Combine(moved, "fault.dll"), "0"]));
+
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Contains("DivideByZeroException", run.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 3", run.Error, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Run_SubsetProgram_PrintsEveryValueKind()
     {
@@ -831,6 +991,7 @@ public sealed class BuildRunCommandTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         string assemblyPath = Path.Combine(outputDirectory, "hello.dll");
         Assert.True(File.Exists(assemblyPath));
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "hello.pdb")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "hello.runtimeconfig.json")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "hello")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "hello.cmd")));
