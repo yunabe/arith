@@ -48,8 +48,9 @@ internal static class ProcessRunner
         }
         catch
         {
-            // A failed output sink must not leave the child blocked on a
-            // pipe that is no longer being drained (e.g. arith run | head).
+            // If forwarding throws, stop the child so it cannot remain
+            // blocked on a pipe that is no longer being drained. Console
+            // streams that suppress broken-pipe errors never enter this catch.
             try
             {
                 process.Kill(entireProcessTree: true);

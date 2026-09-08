@@ -15,8 +15,9 @@ All notable changes to Arith are recorded here. The format follows
 - Stop interpolation-hole scanning at its closing brace and reuse the line
   boundary, avoiding quadratic work for many holes on the same line.
 - Forward `arith run` stdout and stderr during execution with bounded buffers,
-  instead of retaining all output until exit. A failed output sink terminates
-  the child process so it cannot remain blocked on an undrained pipe.
+  instead of retaining all output until exit. When writing or flushing an
+  output sink throws, terminate the child process to avoid leaving it blocked
+  on an undrained pipe. Suppressed broken-pipe errors do not trigger this cleanup.
 
 ## [0.2.0] - 2026-09-06
 
