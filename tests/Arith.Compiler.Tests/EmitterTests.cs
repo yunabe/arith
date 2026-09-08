@@ -22,6 +22,7 @@ public sealed class EmitterTests
         Compilation compilation = Compilation.Create(SyntaxTree.Parse(SourceText.From(source)));
         EmitResult result = compilation.Emit("test");
         Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        IlVerification.AssertValid(result.PeImage);
         PEReader pe = new(ImmutableArray.CreateRange(result.PeImage));
         return (pe, pe.GetMetadataReader());
     }

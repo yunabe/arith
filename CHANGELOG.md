@@ -10,6 +10,10 @@ All notable changes to Arith are recorded here. The format follows
 
 ### Added
 
+- Verify generated IL during ordinary tests using the official ILVerify
+  library, covering all examples and focused cases in normal/debug modes,
+  uncalled methods, and the entry-point bridge. Corrupted-image tests check
+  that invalid stack operations, return types, and `maxStack` are rejected.
 - Emit a matching Portable PDB alongside managed assemblies, mapping IL
   offsets back to `.arith` source ranges. `arith run` uses these symbols
   too, so runtime stack traces can include source paths and line numbers.
@@ -25,6 +29,9 @@ All notable changes to Arith are recorded here. The format follows
 
 ### Fixed
 
+- Emit repeat-array fill loops with the condition before the body, satisfying
+  ILVerify's backward-branch rule when enclosing expressions leave operands
+  on the stack (for example, `grid[0] = [value; count]`).
 - Parse `f32` literals directly at single precision, avoiding double rounding
   for both suffixed literals and literals with an expected `f32` type.
 - Stop interpolation-hole scanning at its closing brace and reuse the line

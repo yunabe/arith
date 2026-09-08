@@ -199,6 +199,40 @@ public sealed class ArrayProgramTests : IDisposable
         Assert.Equal(["value", "count", "14"], Lines(result.Output));
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
+    [InlineData(3, false)]
+    [InlineData(3, true)]
+    public void Run_RepeatWithPendingOperands_PreservesValuesAndEvaluationOrder(int count, bool debug)
+    {
+        string source = WriteSource("repeat-operands.arith", """
+            fn note(v: i64) -> i64 { print(v); return v; }
+            fn select(n: i64, values: []i64) -> i64 { return n + len(values); }
+            fn main(n: i64) {
+                let grid = [[note(1); note(n)], [2; 0]];
+                print(len(grid[0]));
+                grid[0] = [note(3); note(n)];
+                for value in grid[0] { print(value); }
+                print(select(4, [5; n]));
+                print(6 + len([7; n]));
+                print(len([8; 9 + len([10; n])]));
+            }
+            """);
+        string[] options = debug ? ["--debug"] : [];
+        string n = count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        CliResult result = CliRunner.Run(["run", .. options, source, n]);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(
+            new[] { "1", n, n, "3", n }
+                .Concat(Enumerable.Repeat("3", count))
+                .Concat(new[] { count + 4, count + 6, count + 9 }
+                    .Select(v => v.ToString(System.Globalization.CultureInfo.InvariantCulture))),
+            Lines(result.Output));
+    }
+
     [Fact]
     public void Run_ForEach_VisitsElementsInOrderWithControlFlow()
     {

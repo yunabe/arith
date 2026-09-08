@@ -356,3 +356,39 @@ ilspycmd path/to/fib.dll           # decompile back to C#
 
 `ILSpy` (GUI) and the `mdv` metadata visualizer from dotnet/metadata-tools show the
 raw tables and heaps, which is the fastest way to build intuition for section 2.
+
+## 9. Verifying generated IL
+
+`dotnet test` runs the official
+[ILVerify library](https://github.com/dotnet/runtime/tree/main/src/coreclr/tools/ILVerification)
+over emitted PE bytes, without loading or executing the generated assembly.
+The dependency lives only in `Arith.Compiler.Tests`. Its resolver opens framework
+assemblies from the runtime executing the tests, including the facades and
+forwarded types, so the same tests run on Linux, macOS, and Windows without
+installing a separate tool.
+
+The tests verify all methods (even uncalled functions and the synthesized
+`<Main>` bridge) and type definitions. All `examples/*.arith` files are embedded
+as test resources and verified in normal and debug modes, alongside focused
+cases for types, conversions, arrays, control flow, large local indices, and
+`maxStack > 8`. Existing IL and PDB inspection tests also verify their images.
+Failures identify the method, IL offset when available, and verifier diagnostic.
+Tests that corrupt an otherwise valid image check that stack underflow, a
+reference returned as `i64`, and a zero `maxStack` are actually rejected.
+
+Adding verification exposed a useful distinction between runtime acceptance
+and verifier rules. The old repeat-array loop emitted `br test; body; test;
+blt body`. In `grid[0] = [value; count]`, the outer array and index remain on
+the stack during that loop. ILVerify rejects the backward branch: on a forward
+scan, the skipped body initially has no known incoming stack, so ECMA-335
+III.1.7.5 assumes it is empty. Emitting `test; bge exit; body; br test; exit`
+lets the body inherit the known stack through fall-through.
+
+Modern .NET does not enforce that old backward-branch restriction, as documented
+in the [.NET ECMA-335 addendum](https://github.com/dotnet/runtime/blob/main/docs/design/specs/Ecma-335-Augments.md#backward-branch-constraints),
+so this was a verifier compatibility issue rather than a demonstrated runtime
+failure. The emitter now satisfies ILVerify without suppressing that diagnostic;
+execution tests cover zero/nonzero counts and operand evaluation order in both
+modes. Verification checks the emitted cases' IL structure and types, not whether
+the compiler implements every source-language rule correctly, so the runtime
+and diagnostic tests remain necessary.

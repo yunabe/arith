@@ -1284,10 +1284,20 @@ public sealed class Emitter
             Push();
             _il.StoreLocal(indexSlot);
             Pop();
-            LabelHandle body = _il.DefineLabel();
+            // Test before the body so its incoming stack is known on a
+            // forward scan (ECMA-335 III.1.7.5, enforced by ILVerify).
+            // Enclosing expressions may have operands on the stack; jumping
+            // over the body first would give it an assumed empty stack.
             LabelHandle test = _il.DefineLabel();
-            _il.Branch(ILOpCode.Br, test);
-            _il.MarkLabel(body);
+            LabelHandle exit = _il.DefineLabel();
+            _il.MarkLabel(test);
+            _il.LoadLocal(indexSlot);
+            Push();
+            _il.LoadLocal(countSlot);
+            Push();
+            _il.Branch(ILOpCode.Bge, exit);
+            Pop(2);
+
             _il.LoadLocal(arraySlot);
             Push();
             _il.LoadLocal(indexSlot);
@@ -1298,13 +1308,8 @@ public sealed class Emitter
             EmitStoreElement(elementType);
             Pop(3);
             EmitVariableIncrement(indexSlot);
-            _il.MarkLabel(test);
-            _il.LoadLocal(indexSlot);
-            Push();
-            _il.LoadLocal(countSlot);
-            Push();
-            _il.Branch(ILOpCode.Blt, body);
-            Pop(2);
+            _il.Branch(ILOpCode.Br, test);
+            _il.MarkLabel(exit);
 
             MarkSequencePoint(repeat.Span);
             _il.LoadLocal(arraySlot);
