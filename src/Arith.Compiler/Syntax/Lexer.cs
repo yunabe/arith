@@ -17,6 +17,7 @@ public sealed class Lexer
     private readonly DiagnosticBag _diagnostics;
     private readonly int _end;
     private int _position;
+    private int _lineEnd = -1;
 
     private Lexer(SourceText text, DiagnosticBag diagnostics, int start, int end)
     {
@@ -302,8 +303,8 @@ public sealed class Lexer
     }
 
     /// <summary>
-    /// Finds the `}` matching an already-consumed `${` by tokenizing the
-    /// rest of the line — with a throwaway diagnostic bag, since the real
+    /// Finds the `}` matching an already-consumed `${` by reading tokens
+    /// within the current line — with a throwaway diagnostic bag, since the real
     /// lexing and reporting happen when the parser re-lexes the hole — and
     /// tracking brace-token depth. Tokenizing is what makes hole contents
     /// scan correctly: a string, a block comment, or a nested interpolated
@@ -314,15 +315,20 @@ public sealed class Lexer
     private bool ScanHole(out TextSpan span)
     {
         int start = _position;
-        int lineEnd = _position;
-        while (lineEnd < _end && _text[lineEnd] is not ('\n' or '\r'))
-        {
-            lineEnd++;
-        }
-
+        int lineEnd = GetLineEnd();
+        // Read only through the matching brace. LexRange materializes the
+        // entire suffix before returning, which makes adjacent holes do
+        // quadratic work. Share the known line end with nested scanners.
+        Lexer holeLexer = new(_text, new DiagnosticBag(), start, lineEnd) { _lineEnd = lineEnd };
         int depth = 1;
-        foreach (Token token in LexRange(_text, TextSpan.FromBounds(start, lineEnd), new DiagnosticBag()))
+        while (true)
         {
+            Token token = holeLexer.NextToken();
+            if (token.Kind == SyntaxKind.EndOfFileToken)
+            {
+                break;
+            }
+
             if (token.Kind == SyntaxKind.OpenBraceToken)
             {
                 depth++;
@@ -338,6 +344,21 @@ public sealed class Lexer
         span = TextSpan.FromBounds(start, lineEnd);
         _position = lineEnd;
         return false;
+    }
+
+    /// <summary>Finds the current line's end once, even when it contains many holes.</summary>
+    private int GetLineEnd()
+    {
+        if (_position > _lineEnd)
+        {
+            _lineEnd = _position;
+            while (_lineEnd < _end && _text[_lineEnd] is not ('\n' or '\r'))
+            {
+                _lineEnd++;
+            }
+        }
+
+        return _lineEnd;
     }
 
     /// <summary>

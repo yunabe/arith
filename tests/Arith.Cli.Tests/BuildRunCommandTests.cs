@@ -74,6 +74,45 @@ public sealed class BuildRunCommandTests : IDisposable
     }
 
     [Fact]
+    public void Run_F32Literals_RoundDirectlyAtTheirResolvedPrecision()
+    {
+        // These decimals sit just above/below Single midpoints but round
+        // to the midpoint as Double. Casting that Double rounds the wrong
+        // way. Cover suffixes, expected types, pending arithmetic, and sign.
+        string source = WriteSource("single-rounding.arith", """
+            fn identity(value: f32) -> f32 { return value; }
+            fn literal() -> f32 { return 1.0000000596046448; }
+            fn main() {
+                print(1.0000000596046448f32);
+                print(-1.0000000596046448f32);
+                print(1.0000001788139343f32);
+                let typed: f32 = 1.0000000596046448;
+                print(typed);
+                typed = -1.0000000596046448;
+                print(typed);
+                let arithmetic: f32 = 1.0000000596046448 + 0.0;
+                print(arithmetic);
+                print(1.0000000596046448 + 0.0f32);
+                print(identity(1.0000000596046448));
+                print(literal());
+                print(f32("1.0000000596046448"));
+                print(-0.0f32);
+                // Explicit conversion still starts with an f64 operand.
+                print(f32(1.0000000596046448));
+            }
+            """);
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(
+            ["1.0000001", "-1.0000001", "1.0000001", "1.0000001", "-1.0000001",
+             "1.0000001", "1.0000001", "1.0000001", "1.0000001", "1.0000001", "-0", "1"],
+            Lines(result.Output));
+    }
+
+    [Fact]
     public void Run_NumericRoundingAndFormatting_MatchTheSpec()
     {
         // Pins the behaviors LANGUAGE_SPEC sections 4.2, 7, 8.1, and 10.1

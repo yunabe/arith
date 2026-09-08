@@ -6,6 +6,18 @@ All notable changes to Arith are recorded here. The format follows
 [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md); the compiler version is printed by
 `arith version` and matches the git tag.
 
+## [Unreleased]
+
+### Fixed
+
+- Parse `f32` literals directly at single precision, avoiding double rounding
+  for both suffixed literals and literals with an expected `f32` type.
+- Stop interpolation-hole scanning at its closing brace and reuse the line
+  boundary, avoiding quadratic work for many holes on the same line.
+- Forward `arith run` stdout and stderr during execution with bounded buffers,
+  instead of retaining all output until exit. A failed output sink terminates
+  the child process so it cannot remain blocked on an undrained pipe.
+
 ## [0.2.0] - 2026-09-06
 
 The complete implementation of language version 0.2, which adds arrays and
@@ -92,5 +104,6 @@ The first complete implementation of language version 0.1.
   test, including a measured tail-call experiment.
 - CI on Linux, macOS, and Windows.
 
+[Unreleased]: https://github.com/yunabe/arith/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/yunabe/arith/releases/tag/v0.2.0
 [0.1.0]: https://github.com/yunabe/arith/releases/tag/v0.1.0

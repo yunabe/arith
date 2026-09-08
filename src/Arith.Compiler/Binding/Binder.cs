@@ -1090,9 +1090,22 @@ public sealed class Binder
                     return new BoundLiteralExpression(ArithType.PendingFloat, Value: null, token, negated);
                 }
 
-                double magnitude = double.Parse(TrimSuffix(token.Text), CultureInfo.InvariantCulture);
-                double value = negated ? -magnitude : magnitude;
-                object boxed = type == ArithType.F32 ? (object)(float)value : value;
+                // Parse at the literal's resolved precision: going through
+                // double first can round an f32 literal twice, to the wrong
+                // adjacent Single value.
+                string digits = TrimSuffix(token.Text);
+                object boxed;
+                if (type == ArithType.F32)
+                {
+                    float magnitude = float.Parse(digits, CultureInfo.InvariantCulture);
+                    boxed = negated ? -magnitude : magnitude;
+                }
+                else
+                {
+                    double magnitude = double.Parse(digits, CultureInfo.InvariantCulture);
+                    boxed = negated ? -magnitude : magnitude;
+                }
+
                 return new BoundLiteralExpression(type, boxed, token);
             }
 

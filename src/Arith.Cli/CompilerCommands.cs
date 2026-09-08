@@ -128,10 +128,7 @@ internal static partial class CompilerCommands
 
             ProcessStartInfo startInfo = new(
                 "dotnet", [Path.Combine(temporaryDirectory, name + ".dll"), .. programArguments]);
-            ProcessResult processResult = ProcessRunner.Run(startInfo);
-            output.Write(processResult.Output);
-            error.Write(processResult.Error);
-            return processResult.ExitCode;
+            return ProcessRunner.Run(startInfo, output, error);
         }
         finally
         {
