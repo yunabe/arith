@@ -356,14 +356,16 @@ keeping its SRM approach. Structure:
    growing more hand-emitted IL.
 5. **Source mapping** — each function emitter records sequence points at
    method-relative IL offsets. Statements and expressions contribute source
-   ranges; a parent operation restores its own range after emitting operands,
-   so a checked conversion or division is not attributed to its last operand.
+   ranges; entry/exit wrappers restore the enclosing source scope after each
+   operand, so a checked conversion or division uses its parent's range.
    Generated loop control, array-fill loops, and implicit returns use hidden
    points. The bridge gets an empty `MethodDebugInformation` row, keeping that
    table aligned with every PE `MethodDef`. `PortablePdbEmitter` writes the
    document, SHA-256 source checksum, and compressed sequence-point blobs;
    `PortablePdbBuilder` serializes them. A PE debug directory holds the matching
    CodeView PDB ID/name and PDB checksum. No file I/O or C# compilation is involved.
+   `--debug` adds `DebuggableAttribute(true, true)` to disable JIT optimizations,
+   plus visible IL `nop` boundaries to preserve runtime fault locations.
    See [the emission walkthrough](il-emission-notes.md#7-portable-pdb-and-source-locations)
    for the encoding and the limits of optimized stack traces.
 
@@ -373,6 +375,7 @@ keeping its SRM approach. Structure:
 SyntaxTree syntaxTree = SyntaxTree.Parse(sourceText);       // lex + parse only
 Compilation compilation = Compilation.Create(syntaxTree);   // bind
 EmitResult result = compilation.Emit(assemblyName);
+// Use compilation.Emit(assemblyName, debug: true) to preserve fault lines and frames.
 // EmitResult: Success, Diagnostics (all stages), PeImage and PdbImage when Success
 ```
 
@@ -389,14 +392,23 @@ on-disk artifacts, and every packaging mode consumes the same bytes:
   via the `dotnet` host (reusing `ProcessRunner`), forwarding stdout and
   stderr as they arrive with bounded buffers, then returning the exit code.
   The matching PDB remains beside the assembly until execution finishes.
+- Both managed commands accept `--debug` to disable JIT optimizations and add
+  IL source boundaries. Without it, shared throw helpers can report the first
+  statement instead of the faulting line, and inlining can remove frames.
 - `arith build <file.arith> --aot` hands the same `EmitResult` bytes to
   `NativeAotPublisher`, which produces a single native executable: AOT is
   packaging, not a second emission path. This mode currently consumes only the
   PE image; forwarding symbols to ILC and packaging native debug symbols are
   separate work from Portable PDB emission for the managed host.
+  Combining `--debug` and `--aot` is rejected before compilation.
 - `arith experiment build-fib-command` remained until the real pipeline
   covered it, and was retired once `arith build --aot` took over its AOT mode
   (docs/il-emission-notes.md stays as the guided tour of the techniques).
+
+The CLI resolves the source filename once and supplies it as the PDB document
+name. `SourceText.FilePath` is otherwise opaque to the library: emission
+preserves the caller's name without resolving paths against the process CWD.
+Diagnostics keep the CLI argument's original spelling.
 
 ## 5. Testing strategy
 

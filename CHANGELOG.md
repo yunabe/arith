@@ -16,8 +16,12 @@ All notable changes to Arith are recorded here. The format follows
 - Preserve source spans through binding and pending-literal resolution;
   record document SHA-256 checksums from the original bytes, including BOMs.
   Generated loop machinery and implicit returns have hidden sequence
-  points, and the entry-point bridge has no source mapping. JIT optimization
-  remains enabled; NativeAOT debug-symbol packaging is not included.
+  points, and the entry-point bridge has no source mapping. Document names are
+  preserved verbatim in the library and resolved to absolute paths by the CLI.
+- Add `--debug` to managed `build` / `run` to disable JIT optimizations and
+  insert IL source boundaries, preserving fault lines and call frames.
+  Optimization remains enabled by default; `--debug --aot` is rejected, and
+  NativeAOT debug-symbol packaging is not included.
 
 ### Fixed
 

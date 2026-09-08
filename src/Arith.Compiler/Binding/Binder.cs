@@ -220,8 +220,11 @@ public sealed class Binder
         return new BoundBlock(statements.MoveToImmutable()) { Span = syntax.Span };
     }
 
-    private BoundStatement BindStatement(StatementSyntax syntax) =>
-        BindStatementCore(syntax) with { Span = syntax.Span };
+    private BoundStatement BindStatement(StatementSyntax syntax)
+    {
+        BoundStatement bound = BindStatementCore(syntax);
+        return bound.Span == syntax.Span ? bound : bound with { Span = syntax.Span };
+    }
 
     private BoundStatement BindStatementCore(StatementSyntax syntax)
     {

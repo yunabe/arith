@@ -13,7 +13,10 @@ namespace Arith.Compiler.Binding;
 /// </summary>
 public abstract record BoundNode
 {
-    /// <summary>The originating source range; null for compiler-generated nodes.</summary>
+    /// <summary>
+    /// The originating source range; null for compiler-generated nodes.
+    /// Containers retain ranges for uniformity, even when they emit no instructions.
+    /// </summary>
     public TextSpan? Span { get; init; }
 }
 

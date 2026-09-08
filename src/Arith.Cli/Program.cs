@@ -39,6 +39,7 @@ internal static class Program
             Description = "Compile ahead-of-time into a single native executable "
                 + "(requires the platform's native linker; no dotnet host needed to run it).",
         };
+        Option<bool> debugOption = DebugOption();
         Command buildCommand = new("build")
         {
             Description = "Compile an Arith source file into a .NET assembly.",
@@ -46,10 +47,12 @@ internal static class Program
         buildCommand.Arguments.Add(sourceArgument);
         buildCommand.Options.Add(outputOption);
         buildCommand.Options.Add(aotOption);
+        buildCommand.Options.Add(debugOption);
         buildCommand.SetAction(parseResult => CompilerCommands.Build(
             parseResult.GetRequiredValue(sourceArgument),
             parseResult.GetValue(outputOption),
             parseResult.GetValue(aotOption),
+            parseResult.GetValue(debugOption),
             parseResult.InvocationConfiguration.Output,
             parseResult.InvocationConfiguration.Error));
         return buildCommand;
@@ -67,17 +70,25 @@ internal static class Program
                 + "(use `--` before values that start with '-').",
             Arity = ArgumentArity.ZeroOrMore,
         };
+        Option<bool> debugOption = DebugOption();
         Command runCommand = new("run")
         {
             Description = "Compile and run an Arith source file, forwarding its exit code.",
         };
         runCommand.Arguments.Add(sourceArgument);
         runCommand.Arguments.Add(programArguments);
+        runCommand.Options.Add(debugOption);
         runCommand.SetAction(parseResult => CompilerCommands.Run(
             parseResult.GetRequiredValue(sourceArgument),
             parseResult.GetValue(programArguments) ?? [],
+            parseResult.GetValue(debugOption),
             parseResult.InvocationConfiguration.Output,
             parseResult.InvocationConfiguration.Error));
         return runCommand;
     }
+
+    private static Option<bool> DebugOption() => new("--debug")
+    {
+        Description = "Disable JIT optimizations to preserve source lines and call frames (managed output only).",
+    };
 }

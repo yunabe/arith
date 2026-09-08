@@ -35,6 +35,7 @@ public sealed class Emitter
     private readonly BlobBuilder _ilStream = new();
     private readonly MethodBodyStreamEncoder _bodyStream;
     private readonly PortablePdbEmitter _debug;
+    private readonly bool _debugMode;
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, TypeReferenceHandle> _primitiveTypeRefs = [];
     private readonly Dictionary<ArithType, TypeSpecificationHandle> _typeSpecs = [];
@@ -53,24 +54,25 @@ public sealed class Emitter
     private MemberReferenceHandle _textWriterWriteLine;
     private TypeReferenceHandle _objectType;
 
-    private Emitter(SourceText source, string assemblyName)
+    private Emitter(SourceText source, string assemblyName, bool debug)
     {
         _bodyStream = new MethodBodyStreamEncoder(_ilStream);
         _debug = new PortablePdbEmitter(source, assemblyName);
+        _debugMode = debug;
     }
 
     /// <summary>Emits matching PE and Portable PDB images for an error-free bound program.</summary>
     public static (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) Emit(
-        BoundProgram program, string assemblyName, SourceText source)
+        BoundProgram program, string assemblyName, SourceText source, bool debug = false)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentException.ThrowIfNullOrEmpty(assemblyName);
         ArgumentNullException.ThrowIfNull(source);
-        return new Emitter(source, assemblyName).EmitProgram(program, assemblyName);
+        return new Emitter(source, assemblyName, debug).EmitProgram(program, assemblyName, debug);
     }
 
     private (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) EmitProgram(
-        BoundProgram program, string assemblyName)
+        BoundProgram program, string assemblyName, bool debug)
     {
         Debug.Assert(program.EntryPoint is not null, "an error-free program has an entry point");
         Debug.Assert(!program.Functions.IsEmpty, "an error-free program has at least main");
@@ -81,7 +83,7 @@ public sealed class Emitter
             mvid: _metadata.GetOrAddGuid(Guid.NewGuid()),
             encId: default,
             encBaseId: default);
-        _metadata.AddAssembly(
+        AssemblyDefinitionHandle assembly = _metadata.AddAssembly(
             name: _metadata.GetOrAddString(assemblyName),
             version: new Version(1, 0, 0, 0),
             culture: default,
@@ -89,7 +91,7 @@ public sealed class Emitter
             flags: 0,
             hashAlgorithm: AssemblyHashAlgorithm.Sha1);
 
-        AddRuntimeReferences();
+        AddRuntimeReferences(assembly, debug);
 
         // Layout pass (design §4.5): predict every function's MethodDef row
         // before writing bodies, in declaration order.
@@ -187,10 +189,33 @@ public sealed class Emitter
         return ([.. peBlob.ToArray()], pdbImage);
     }
 
-    private void AddRuntimeReferences()
+    private void AddRuntimeReferences(AssemblyDefinitionHandle assembly, bool debug)
     {
         AssemblyReferenceHandle systemRuntime = AddFrameworkReference("System.Runtime");
         AssemblyReferenceHandle systemConsole = AddFrameworkReference("System.Console");
+
+        if (debug)
+        {
+            // DebuggableAttribute(true, true) is Default | DisableOptimizations.
+            // PDBs alone cannot prevent shared throw helpers or inlining from
+            // losing the fault's IL location and its Arith call frames.
+            TypeReferenceHandle attribute = AddTypeReference(systemRuntime, "System.Diagnostics", "DebuggableAttribute");
+            MemberReferenceHandle constructor = _metadata.AddMemberReference(
+                attribute, _metadata.GetOrAddString(".ctor"),
+                MethodSignature(
+                    isInstanceMethod: true, returnType: r => r.Void(), parameterCount: 2,
+                    parameters: p =>
+                    {
+                        p.AddParameter().Type().Boolean();
+                        p.AddParameter().Type().Boolean();
+                    }));
+            BlobBuilder value = new();
+            value.WriteUInt16(1); // Custom-attribute prolog.
+            value.WriteBoolean(true); // isJITTrackingEnabled.
+            value.WriteBoolean(true); // isJITOptimizerDisabled.
+            value.WriteUInt16(0); // No named arguments.
+            _metadata.AddCustomAttribute(assembly, constructor, _metadata.GetOrAddBlob(value));
+        }
 
         _objectType = AddTypeReference(systemRuntime, "System", "Object");
         TypeReferenceHandle console = AddTypeReference(systemConsole, "System", "Console");
@@ -667,6 +692,7 @@ public sealed class Emitter
         private readonly Dictionary<ArithType, int> _printTemps = [];
         private readonly List<(LabelHandle ContinueTarget, LabelHandle BreakTarget)> _loops = [];
         private int _depth;
+        private TextSpan? _sourceSpan;
 
         /// <summary>The type of each local slot, in slot order (lets first-come, then print temps).</summary>
         public List<ArithType> LocalTypes { get; } = [];
@@ -675,10 +701,10 @@ public sealed class Emitter
 
         public List<SourceSequencePoint> SequencePoints { get; } = [];
 
-        private void MarkSequencePoint(TextSpan? span)
+        private void MarkSequencePoint(TextSpan? span, bool emitBoundary = false)
         {
-            // No nop is needed: the next instruction owns this range. Several
-            // nested nodes may begin at the same offset; keep the innermost.
+            // Pending points own the next instruction. In optimized output,
+            // nested nodes at the same offset keep only the innermost range.
             if (SequencePoints.Count > 0 && SequencePoints[^1].Offset == _il.Offset)
             {
                 SequencePoints.RemoveAt(SequencePoints.Count - 1);
@@ -687,6 +713,12 @@ public sealed class Emitter
             if (SequencePoints.Count == 0 || SequencePoints[^1].Span != span)
             {
                 SequencePoints.Add(new SourceSequencePoint(_il.Offset, span));
+                if (emitBoundary && span is not null)
+                {
+                    // In debug mode, preserve an IL boundary even with values
+                    // on the stack (e.g. between a repeat count and conv.ovf.u).
+                    _il.OpCode(ILOpCode.Nop);
+                }
             }
         }
 
@@ -700,6 +732,13 @@ public sealed class Emitter
                     "the binder guarantees value-returning functions contain a return");
                 MarkSequencePoint(null);
                 _il.OpCode(ILOpCode.Ret);
+            }
+
+            // Restoring the enclosing source scope can leave a pending point
+            // after an explicit return. It owns no instruction and is omitted.
+            if (SequencePoints.Count > 0 && SequencePoints[^1].Offset == _il.Offset)
+            {
+                SequencePoints.RemoveAt(SequencePoints.Count - 1);
             }
         }
 
@@ -720,15 +759,24 @@ public sealed class Emitter
         /// <summary>Emits one statement; true when it definitely returned.</summary>
         private bool EmitStatement(BoundStatement statement)
         {
-            if (statement is not BoundBlock)
+            if (statement is BoundBlock block)
             {
-                MarkSequencePoint(statement.Span);
+                return EmitBlock(block);
             }
 
+            TextSpan? enclosing = _sourceSpan;
+            _sourceSpan = statement.Span;
+            MarkSequencePoint(_sourceSpan, emitBoundary: _emitter._debugMode);
+            bool returned = EmitStatementCore(statement);
+            _sourceSpan = enclosing;
+            MarkSequencePoint(enclosing);
+            return returned;
+        }
+
+        private bool EmitStatementCore(BoundStatement statement)
+        {
             switch (statement)
             {
-                case BoundBlock block:
-                    return EmitBlock(block);
                 case BoundLetStatement let:
                 {
                     EmitExpression(let.Initializer);
@@ -744,7 +792,6 @@ public sealed class Emitter
                     {
                         EmitVariableLoad(assignment.Variable);
                         EmitExpression(assignment.Value);
-                        MarkSequencePoint(assignment.Span);
                         EmitBinaryOperator(op, assignment.Variable.Type);
                     }
                     else
@@ -1012,7 +1059,6 @@ public sealed class Emitter
         private void EmitPrint(BoundPrintStatement print)
         {
             EmitExpression(print.Argument);
-            MarkSequencePoint(print.Span);
             EmitConvertToString(print.Argument.Type);
             _il.Call(_emitter._consoleWriteLineString);
             Pop();
@@ -1063,7 +1109,18 @@ public sealed class Emitter
 
         private void EmitExpression(BoundExpression expression)
         {
-            MarkSequencePoint(expression.Span);
+            // Every operand restores its parent's source scope before the
+            // parent emits its own instructions, including checked operations.
+            TextSpan? enclosing = _sourceSpan;
+            _sourceSpan = expression.Span;
+            MarkSequencePoint(_sourceSpan, emitBoundary: _emitter._debugMode);
+            EmitExpressionCore(expression);
+            _sourceSpan = enclosing;
+            MarkSequencePoint(enclosing, emitBoundary: _emitter._debugMode);
+        }
+
+        private void EmitExpressionCore(BoundExpression expression)
+        {
             switch (expression)
             {
                 case BoundLiteralExpression literal:
@@ -1074,7 +1131,6 @@ public sealed class Emitter
                     break;
                 case BoundUnaryExpression { OperatorKind: BoundUnaryOperatorKind.LogicalNegation } unary:
                     EmitExpression(unary.Operand);
-                    MarkSequencePoint(unary.Span);
                     EmitBooleanNegation();
                     break;
                 case BoundUnaryExpression unary:
@@ -1095,14 +1151,12 @@ public sealed class Emitter
 
                         Push();
                         EmitExpression(unary.Operand);
-                        MarkSequencePoint(unary.Span);
                         _il.OpCode(ILOpCode.Sub_ovf);
                         Pop();
                     }
                     else
                     {
                         EmitExpression(unary.Operand);
-                        MarkSequencePoint(unary.Span);
                         _il.OpCode(ILOpCode.Neg);
                     }
 
@@ -1118,18 +1172,15 @@ public sealed class Emitter
                 case BoundBinaryExpression binary when binary.Type == ArithType.Bool:
                     EmitExpression(binary.Left);
                     EmitExpression(binary.Right);
-                    MarkSequencePoint(binary.Span);
                     EmitComparisonOperator(binary.OperatorKind, binary.Left.Type);
                     break;
                 case BoundBinaryExpression binary:
                     EmitExpression(binary.Left);
                     EmitExpression(binary.Right);
-                    MarkSequencePoint(binary.Span);
                     EmitBinaryOperator(binary.OperatorKind, binary.Type);
                     break;
                 case BoundConversionExpression conversion:
                     EmitExpression(conversion.Operand);
-                    MarkSequencePoint(conversion.Span);
                     EmitConversion(conversion.Operand.Type, conversion.Type);
                     break;
                 case BoundCallExpression call:
@@ -1139,7 +1190,6 @@ public sealed class Emitter
                         EmitExpression(argument);
                     }
 
-                    MarkSequencePoint(call.Span);
                     _il.Call(_emitter._methodHandles[call.Function]);
                     Pop(call.Arguments.Length);
                     if (call.Function.ReturnType != ArithType.Void)
@@ -1159,7 +1209,6 @@ public sealed class Emitter
                 case BoundIndexExpression index:
                     EmitExpression(index.Array);
                     EmitExpression(index.Index);
-                    MarkSequencePoint(index.Span);
                     EmitIndexToNativeInt();
                     EmitLoadElement(index.Type);
                     Pop(); // Array and index in, element out.
@@ -1168,7 +1217,6 @@ public sealed class Emitter
                     // ldlen pushes a native unsigned int; a .NET array length
                     // always fits i64, so widen unsigned (design §7).
                     EmitExpression(len.Array);
-                    MarkSequencePoint(len.Span);
                     _il.OpCode(ILOpCode.Ldlen);
                     _il.OpCode(ILOpCode.Conv_u8);
                     break;
@@ -1225,7 +1273,6 @@ public sealed class Emitter
             _il.StoreLocal(countSlot);
             Pop();
             _il.OpCode(ILOpCode.Conv_ovf_u);
-            MarkSequencePoint(repeat.Span);
             _il.OpCode(ILOpCode.Newarr);
             _il.Token(_emitter.GetTypeHandle(elementType));
             _il.StoreLocal(arraySlot);
@@ -1275,10 +1322,8 @@ public sealed class Emitter
             {
                 EmitExpression(assignment.Array);
                 EmitExpression(assignment.Index);
-                MarkSequencePoint(assignment.Span);
                 EmitIndexToNativeInt();
                 EmitExpression(assignment.Value);
-                MarkSequencePoint(assignment.Span);
                 EmitStoreElement(assignment.ElementType);
                 Pop(3);
                 return;
@@ -1295,7 +1340,6 @@ public sealed class Emitter
 
             // array[i] = array[i] op value — the element read is the start
             // of the right-hand side, so it precedes the value (spec §8.4).
-            MarkSequencePoint(assignment.Span);
             _il.LoadLocal(arraySlot);
             Push();
             _il.LoadLocal(indexSlot);
@@ -1309,7 +1353,6 @@ public sealed class Emitter
             EmitLoadElement(assignment.ElementType);
             Pop();
             EmitExpression(assignment.Value);
-            MarkSequencePoint(assignment.Span);
             EmitBinaryOperator(op, assignment.ElementType);
             EmitStoreElement(assignment.ElementType);
             Pop(3);

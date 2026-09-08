@@ -23,8 +23,14 @@ internal static partial class CompilerCommands
 
     /// <summary>Compiles a source file and writes its artifacts. Returns the process exit code.</summary>
     internal static int Build(
-        string sourcePath, string? outputDirectory, bool aot, TextWriter output, TextWriter error)
+        string sourcePath, string? outputDirectory, bool aot, bool debug, TextWriter output, TextWriter error)
     {
+        if (aot && debug)
+        {
+            error.WriteLine("error: --debug cannot be combined with --aot; debug mode currently supports managed output only");
+            return 1;
+        }
+
         if (ValidateProgramName(sourcePath, error) is not { } name)
         {
             return 1;
@@ -33,22 +39,31 @@ internal static partial class CompilerCommands
         // Defense in depth beyond the name rule: refuse to overwrite the
         // input with any planned output, whatever the paths involved.
         string resolvedOutputDirectory = outputDirectory ?? Directory.GetCurrentDirectory();
-        string sourceFullPath = Path.GetFullPath(sourcePath);
-        foreach (string planned in ArtifactWriter.PlannedPaths(resolvedOutputDirectory, name))
+        string sourceFullPath;
+        try
         {
-            if (string.Equals(Path.GetFullPath(planned), sourceFullPath, StringComparison.OrdinalIgnoreCase))
+            sourceFullPath = Path.GetFullPath(sourcePath);
+            foreach (string planned in ArtifactWriter.PlannedPaths(resolvedOutputDirectory, name))
             {
-                error.WriteLine($"error: output file '{planned}' would overwrite the source file");
-                return 1;
+                if (string.Equals(Path.GetFullPath(planned), sourceFullPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    error.WriteLine($"error: output file '{planned}' would overwrite the source file");
+                    return 1;
+                }
             }
         }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException)
+        {
+            error.WriteLine($"error: cannot resolve input or output path: {exception.Message}");
+            return 1;
+        }
 
-        if (CompileFile(sourcePath, name, error) is not ({ } result, { } source))
+        if (CompileFile(sourcePath, name, debug, error, sourceFullPath) is not ({ } result, { } source))
         {
             return 1;
         }
 
-        PrintDiagnostics(result, source, error);
+        PrintDiagnostics(result, source, sourcePath, error);
         if (!result.Success)
         {
             return 1;
@@ -94,19 +109,19 @@ internal static partial class CompilerCommands
 
     /// <summary>Builds into a temporary directory, runs via the dotnet host, and forwards the exit code.</summary>
     internal static int Run(
-        string sourcePath, string[] programArguments, TextWriter output, TextWriter error)
+        string sourcePath, string[] programArguments, bool debug, TextWriter output, TextWriter error)
     {
         if (ValidateProgramName(sourcePath, error) is not { } name)
         {
             return 1;
         }
 
-        if (CompileFile(sourcePath, name, error) is not ({ } result, { } source))
+        if (CompileFile(sourcePath, name, debug, error) is not ({ } result, { } source))
         {
             return 1;
         }
 
-        PrintDiagnostics(result, source, error);
+        PrintDiagnostics(result, source, sourcePath, error);
         if (!result.Success)
         {
             return 1;
@@ -161,31 +176,35 @@ internal static partial class CompilerCommands
 
     /// <summary>Reads and compiles the file, or returns null (with a message) when it cannot be read.</summary>
     private static (EmitResult Result, SourceText Source)? CompileFile(
-        string sourcePath, string assemblyName, TextWriter error)
+        string sourcePath, string assemblyName, bool debug, TextWriter error, string? sourceFullPath = null)
     {
         SourceText source;
         try
         {
-            source = SourceText.FromBytes(File.ReadAllBytes(sourcePath), sourcePath);
+            // Resolve at the CLI boundary, once; the compiler treats paths as
+            // document names and never interprets them against the process CWD.
+            sourceFullPath ??= Path.GetFullPath(sourcePath);
+            source = SourceText.FromBytes(File.ReadAllBytes(sourceFullPath), sourceFullPath);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException)
         {
             error.WriteLine($"error: cannot read '{sourcePath}': {exception.Message}");
             return null;
         }
 
         Compilation compilation = Compilation.Create(SyntaxTree.Parse(source));
-        return (compilation.Emit(assemblyName), source);
+        return (compilation.Emit(assemblyName, debug), source);
     }
 
     /// <summary>Renders diagnostics as `path:line:col: severity CODE: message` (design §4.6).</summary>
-    private static void PrintDiagnostics(EmitResult result, SourceText source, TextWriter error)
+    private static void PrintDiagnostics(EmitResult result, SourceText source, string diagnosticPath, TextWriter error)
     {
         foreach (Diagnostic diagnostic in result.Diagnostics)
         {
             LinePosition position = source.GetLinePosition(diagnostic.Span.Start);
             string severity = diagnostic.Severity == DiagnosticSeverity.Error ? "error" : "warning";
-            error.WriteLine($"{source.FilePath}:{position}: {severity} {diagnostic.Code}: {diagnostic.Message}");
+            error.WriteLine($"{diagnosticPath}:{position}: {severity} {diagnostic.Code}: {diagnostic.Message}");
         }
     }
 }

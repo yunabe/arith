@@ -12,9 +12,9 @@ namespace Arith.Compiler.Tests;
 
 public sealed class PortablePdbTests
 {
-    private static EmitResult Emit(SourceText source)
+    private static EmitResult Emit(SourceText source, bool debug = false)
     {
-        EmitResult result = Compilation.Create(SyntaxTree.Parse(source)).Emit("symbols");
+        EmitResult result = Compilation.Create(SyntaxTree.Parse(source)).Emit("symbols", debug);
         Assert.True(result.Success, string.Join("\n", result.Diagnostics));
         return result;
     }
@@ -23,7 +23,7 @@ public sealed class PortablePdbTests
     [InlineData("utf8")]
     [InlineData("utf8-bom")]
     [InlineData("utf16")]
-    public void Document_RecordsAbsolutePathAndHashOfOriginalBytes(string encodingName)
+    public void Document_PreservesSuppliedPathAndHashOfOriginalBytes(string encodingName)
     {
         Encoding encoding = encodingName switch
         {
@@ -38,10 +38,52 @@ public sealed class PortablePdbTests
         MetadataReader pdb = provider.GetMetadataReader();
         Document document = pdb.GetDocument(Assert.Single(pdb.Documents));
 
-        Assert.Equal(Path.GetFullPath(path), pdb.GetString(document.Name));
+        Assert.Equal(path, pdb.GetString(document.Name));
         Assert.Equal(new Guid("8829d00f-11b8-4213-878b-770e8597ac16"), pdb.GetGuid(document.HashAlgorithm));
         Assert.Equal(SHA256.HashData(bytes), pdb.GetBlobBytes(document.Hash));
         Assert.True(document.Language.IsNil); // Do not select a C# expression evaluator for Arith.
+    }
+
+    [Theory]
+    [InlineData("prog.arith")]
+    [InlineData("../virtual/prog.arith")]
+    [InlineData("memory://session/prog.arith")]
+    [InlineData("invalid\0path.arith")]
+    [InlineData("   ")]
+    [InlineData("")]
+    public void Document_DoesNotInterpretOrValidateCallerSuppliedNames(string path)
+    {
+        EmitResult result = Emit(SourceText.From("fn main() { }", path));
+        using MetadataReaderProvider provider = MetadataReaderProvider.FromPortablePdbImage(result.PdbImage);
+        MetadataReader pdb = provider.GetMetadataReader();
+        Document document = pdb.GetDocument(Assert.Single(pdb.Documents));
+        Assert.Equal(path.Length == 0 ? "symbols.arith" : path, pdb.GetString(document.Name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DebugMode_ControlsTheAssemblyDebuggableAttribute(bool debug)
+    {
+        EmitResult result = Compilation.Create(SyntaxTree.Parse(SourceText.From("fn main() { }")))
+            .Emit("symbols", debug: debug);
+        Assert.True(result.Success);
+        using PEReader pe = new(result.PeImage);
+        MetadataReader metadata = pe.GetMetadataReader();
+        CustomAttributeHandleCollection attributes = metadata.GetAssemblyDefinition().GetCustomAttributes();
+        if (!debug)
+        {
+            Assert.Empty(attributes);
+            return;
+        }
+
+        CustomAttribute attribute = metadata.GetCustomAttribute(Assert.Single(attributes));
+        MemberReference constructor = metadata.GetMemberReference((MemberReferenceHandle)attribute.Constructor);
+        TypeReference type = metadata.GetTypeReference((TypeReferenceHandle)constructor.Parent);
+        Assert.Equal("System.Diagnostics", metadata.GetString(type.Namespace));
+        Assert.Equal("DebuggableAttribute", metadata.GetString(type.Name));
+        Assert.Equal(".ctor", metadata.GetString(constructor.Name));
+        Assert.Equal(new byte[] { 1, 0, 1, 1, 0, 0 }, metadata.GetBlobBytes(attribute.Value));
     }
 
     [Fact]
@@ -69,8 +111,10 @@ public sealed class PortablePdbTests
         Assert.Equal(SHA256.HashData(result.PdbImage.AsSpan()), checksum.Checksum.ToArray());
     }
 
-    [Fact]
-    public void Methods_HaveAlignedDebugRowsAndValidOffsetsIncludingGeneratedCode()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Methods_HaveAlignedDebugRowsAndValidOffsetsIncludingGeneratedCode(bool debug)
     {
         EmitResult result = Emit(SourceText.From("""
             fn empty() { }
@@ -84,7 +128,8 @@ public sealed class PortablePdbTests
                 for i in 0..=n { if i == 2 { break; } }
             }
             fn main(n: i64) { loop(n); }
-            """));
+            fn branches(flag: bool) -> i64 { if flag { return 1; } else { return 2; } }
+            """), debug);
         using PEReader pe = new(result.PeImage);
         MetadataReader metadata = pe.GetMetadataReader();
         using MetadataReaderProvider provider = MetadataReaderProvider.FromPortablePdbImage(result.PdbImage);
@@ -95,17 +140,17 @@ public sealed class PortablePdbTests
         {
             MethodDefinition method = metadata.GetMethodDefinition(handle);
             MethodBodyBlock body = pe.GetMethodBody(method.RelativeVirtualAddress);
-            MethodDebugInformation debug = pdb.GetMethodDebugInformation(handle);
-            SequencePoint[] points = [.. debug.GetSequencePoints()];
+            MethodDebugInformation information = pdb.GetMethodDebugInformation(handle);
+            SequencePoint[] points = [.. information.GetSequencePoints()];
             string name = metadata.GetString(method.Name);
             if (name == "<Main>")
             {
                 Assert.Empty(points);
-                Assert.True(debug.Document.IsNil);
+                Assert.True(information.Document.IsNil);
                 continue;
             }
 
-            Assert.Equal(body.LocalSignature, debug.LocalSignature);
+            Assert.Equal(body.LocalSignature, information.LocalSignature);
             Assert.NotEmpty(points);
             int previousOffset = -1;
             foreach (SequencePoint point in points)
@@ -127,7 +172,9 @@ public sealed class PortablePdbTests
             }
             else if (name == "loop")
             {
-                Assert.True(points[0].IsHidden); // The initial branch precedes the first source point.
+                // Optimized output starts at the hidden branch; debug output
+                // first inserts a visible nop boundary for the while statement.
+                Assert.Equal(!debug, points[0].IsHidden);
                 Assert.Contains(points, p => p.StartLine == 4);
                 // The while test follows the body in IL, but precedes it in source.
                 SequencePoint[] visible = [.. points.Where(p => !p.IsHidden)];
@@ -174,6 +221,33 @@ public sealed class PortablePdbTests
         Assert.Equal("(1 + -2)", code.Substring(sum.Span!.Value.Start, sum.Span.Value.Length));
         Assert.Equal("1", code.Substring(sum.Left.Span!.Value.Start, sum.Left.Span.Value.Length));
         Assert.Equal("-2", code.Substring(sum.Right.Span!.Value.Start, sum.Right.Span.Value.Length));
+    }
+
+    [Fact]
+    public void MultilineArrayRepeat_MapsCheckedCountConversionToTheRepeatExpression()
+    {
+        EmitResult result = Emit(SourceText.From("""
+            fn main(n: i64) {
+                print(n);
+                let a = [0;
+                    n];
+            }
+            """));
+        using PEReader pe = new(result.PeImage);
+        MethodDefinitionHandle main = pe.GetMetadataReader().MethodDefinitions.First();
+        MethodDefinition method = pe.GetMetadataReader().GetMethodDefinition(main);
+        byte[] il = pe.GetMethodBody(method.RelativeVirtualAddress).GetILBytes()!;
+        int conversion = Array.IndexOf(il, (byte)ILOpCode.Conv_ovf_u);
+        Assert.True(conversion >= 0);
+        using MetadataReaderProvider provider = MetadataReaderProvider.FromPortablePdbImage(result.PdbImage);
+        SequencePoint point = provider.GetMetadataReader().GetMethodDebugInformation(main)
+            .GetSequencePoints().Last(p => p.Offset <= conversion);
+
+        Assert.False(point.IsHidden);
+        Assert.Equal(3, point.StartLine);
+        Assert.Equal(13, point.StartColumn);
+        Assert.Equal(4, point.EndLine);
+        Assert.Equal(11, point.EndColumn);
     }
 
     [Fact]

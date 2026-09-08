@@ -77,8 +77,10 @@ See [LANGUAGE_SPEC.md](LANGUAGE_SPEC.md) for the complete syntax and semantics.
 
 ```console
 arith build hello.arith [-o <dir>]   # compile into a .NET assembly
+arith build hello.arith --debug     # preserve fault lines and call frames
 arith build hello.arith --aot        # compile into a single native executable
 arith run hello.arith [args...]      # compile and run, forwarding the exit code
+arith run --debug hello.arith        # run with JIT optimizations disabled
 ```
 
 A `main` may take command-line arguments in one of two forms
@@ -122,18 +124,32 @@ dotnet hello.dll
 
 Keep the matching `.pdb` beside the `.dll` when moving the output. Both
 `arith run` and `dotnet hello.dll` can then include the original `.arith`
-file and line in exception stack traces, for example:
+file and line in exception stack traces. Use `--debug` when investigating a
+runtime failure: it disables JIT optimizations and preserves call frames.
+For example, save this as `fault.arith`:
+
+```arith
+fn main() {
+    let x = 10;
+    let y = 0;
+    print(x);
+    print(x / y);
+}
+```
+
+`arith run --debug fault.arith` prints `10` followed by:
 
 ```text
 Unhandled exception. System.DivideByZeroException: Attempted to divide by zero.
-   at Program.main() in /path/to/hello.arith:line 2
+   at Program.main() in /path/to/fault.arith:line 5
+   at Program.<Main>(String[] args)
 ```
 
 The PDB records source ranges and a SHA-256 checksum of the input file;
-the source itself is not embedded. JIT optimization remains enabled, as
-before: inlining may remove frames, and code motion may make a reported
-line approximate, just as in a C# Release build. This is source-location
-support; debugger local-variable scopes and expression evaluation are not
+the source itself is not embedded. Without `--debug`, JIT optimization remains
+enabled: division, bounds-check, and overflow faults can report the function's
+first statement instead of the failing line, and inlining may remove frames.
+This is source-location support; debugger local-variable scopes and expression evaluation are not
 implemented. See the [PDB emission notes](docs/il-emission-notes.md#7-portable-pdb-and-source-locations).
 
 With `--aot`, the same emitted IL is instead compiled ahead-of-time by the
@@ -142,6 +158,7 @@ official NativeAOT toolchain into one native executable that runs without the
 Tools on macOS; see [docs/il-emission-notes.md](docs/il-emission-notes.md)).
 Portable PDB output currently applies to managed `build` / `run`; packaging
 native debug symbols for `--aot` is a separate follow-up.
+`--debug` and `--aot` cannot be combined.
 
 On failure, diagnostics are printed as `file:line:col: error ARITHxxxx: message`;
 every code is listed in [docs/diagnostics.md](docs/diagnostics.md).

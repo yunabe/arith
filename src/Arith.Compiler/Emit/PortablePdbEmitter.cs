@@ -25,7 +25,7 @@ internal sealed class PortablePdbEmitter
     {
         _source = source;
         string documentName = string.IsNullOrEmpty(source.FilePath)
-            ? assemblyName + ".arith" : Path.GetFullPath(source.FilePath);
+            ? assemblyName + ".arith" : source.FilePath;
         _document = _metadata.AddDocument(
             _metadata.GetOrAddDocumentName(documentName),
             _metadata.GetOrAddGuid(Sha256Algorithm),

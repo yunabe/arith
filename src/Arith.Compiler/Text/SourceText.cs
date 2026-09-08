@@ -20,12 +20,18 @@ public sealed class SourceText
         FilePath = filePath;
     }
 
+    /// <summary>The caller-supplied document name, preserved verbatim in the PDB.</summary>
     public string FilePath { get; }
 
     public int Length => _text.Length;
 
     public char this[int index] => _text[index];
 
+    /// <summary>
+    /// Creates an in-memory source, using UTF-8 without a BOM for its checksum.
+    /// For files, use <see cref="FromBytes"/> to hash their original encoding and BOM.
+    /// The supplied path is a document name and is preserved verbatim during emission.
+    /// </summary>
     public static SourceText From(string text, string filePath = "") => new(text, filePath);
 
     /// <summary>

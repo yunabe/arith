@@ -50,7 +50,9 @@ public sealed class Compilation
     /// error-free compile (design §3): with errors, the result carries the
     /// diagnostics and neither image.
     /// </summary>
-    public EmitResult Emit(string assemblyName)
+    /// <param name="assemblyName">The emitted assembly's simple name.</param>
+    /// <param name="debug">Disable JIT optimizations and add IL source boundaries for fault lines and call frames.</param>
+    public EmitResult Emit(string assemblyName, bool debug = false)
     {
         if (HasErrors)
         {
@@ -58,7 +60,7 @@ public sealed class Compilation
         }
 
         (ImmutableArray<byte> peImage, ImmutableArray<byte> pdbImage) =
-            Emitter.Emit(Program, assemblyName, SyntaxTree.Text);
+            Emitter.Emit(Program, assemblyName, SyntaxTree.Text, debug);
         return new EmitResult(success: true, Diagnostics, peImage, pdbImage);
     }
 }
