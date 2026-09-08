@@ -94,6 +94,9 @@ arith run calc.arith sum 1 2 3       # fn main(args: []string)
 arith run negate.arith -- -5
 ```
 
+`arith run` forwards standard output and standard error as the program runs,
+so progress output is visible before the program exits.
+
 The source file must be named `<program-name>.arith`, where `<program-name>`
 starts with a letter or `_` and contains only letters, digits, `_`, and `-`
 (a CLI rule, not part of the language); the outputs are named after it.

@@ -239,6 +239,47 @@ public sealed class LexerTests
     }
 
     [Fact]
+    public void Lex_InterpolatedString_ManyHoles_UsesBoundedAllocations()
+    {
+        const int holeCount = 2000;
+        string source = "f\"" + string.Concat(Enumerable.Repeat("${1}", holeCount)) + "\"";
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        ImmutableArray<Token> tokens = Lex(source, out ImmutableArray<Diagnostic> diagnostics);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Empty(diagnostics);
+        Assert.Equal(2, tokens.Length);
+        Assert.Equal(holeCount, tokens[0].Segments.Length);
+        Assert.All(tokens[0].Segments, segment =>
+        {
+            Assert.True(segment.IsHole);
+            Assert.Equal("1", source.Substring(segment.Span.Start, segment.Span.Length));
+        });
+        // A generous allocation ceiling avoids timing-sensitive assertions.
+        // Re-tokenizing each remaining suffix allocates hundreds of MB here.
+        Assert.True(allocated < 16 * 1024 * 1024, $"Lexing allocated {allocated:N0} bytes.");
+    }
+
+    [Fact]
+    public void Lex_InterpolatedStrings_OnDifferentLines_KeepTheirHoleBoundaries()
+    {
+        const string source = """
+            f"${1}${2}"
+            f"longer: ${"}" /* } */ + f"${3}"}${4}"
+            f"${5}"
+            """;
+
+        ImmutableArray<Token> tokens = LexClean(source);
+
+        Assert.Equal(3, tokens.Length);
+        string[] holes = [.. tokens.SelectMany(token => token.Segments)
+            .Where(segment => segment.IsHole)
+            .Select(segment => source.Substring(segment.Span.Start, segment.Span.Length))];
+        Assert.Equal(["1", "2", "\"}\" /* } */ + f\"${3}\"", "4", "5"], holes);
+    }
+
+    [Fact]
     public void Lex_NestedInterpolatedString_TracksQuotesInsideTheHole()
     {
         // The nested literal's quotes and braces must not end the outer

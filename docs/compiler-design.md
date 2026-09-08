@@ -372,7 +372,8 @@ on-disk artifacts, and every packaging mode consumes the same bytes:
   diagnostic as `file:line:col: error ARITHxxxx: message` and exit 1; on
   success write `<name>.dll`, `<name>.runtimeconfig.json`, and the launchers.
 - `arith run <file.arith>` — build into a temp/cache directory, then execute
-  via the `dotnet` host (reusing `ProcessRunner`), forwarding the exit code.
+  via the `dotnet` host (reusing `ProcessRunner`), forwarding stdout and
+  stderr as they arrive with bounded buffers, then returning the exit code.
 - `arith build <file.arith> --aot` hands the same `EmitResult` bytes to
   `NativeAotPublisher`, which produces a single native executable: AOT is
   packaging, not a second emission path.
@@ -497,12 +498,13 @@ front-end sugar last:
    expression would, so the binder and emitter change not at all. Lexing
    strategy: the lexer scans an `f"…"` as one token recording its segment
    spans (text runs and `${…}` holes; a hole's matching `}` is found by
-   tokenizing the rest of the line with a throwaway diagnostic bag, so
+   reading tokens up to that brace with a throwaway diagnostic bag, so
    strings, block comments, and nested interpolations inside it skip as
    whole units); the parser then runs the ordinary lexer+expression parser
    over each hole span. That reuses the existing machinery instead of
    teaching the main lexer a mode stack, at the cost of one extra lex per
-   hole.
+   hole. The scanner caches the line end and passes it to nested scanners,
+   so adjacent holes do not repeatedly scan the rest of the line.
 5. **Hardening and release**: examples that need the new features (a
    grid/matrix program, an `args`-driven CLI), the spec-coverage sweep,
    docs/diagnostics.md rows for the new codes, CHANGELOG — then tag
