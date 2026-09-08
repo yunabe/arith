@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
@@ -35,27 +36,29 @@ internal static class IlVerification
 
         foreach (TypeDefinitionHandle type in metadata.TypeDefinitions)
         {
-            foreach (VerificationResult result in verifier.Verify(pe, type))
+            foreach (VerificationResult result in verifier.Verify(pe, type, verifyMethods: false))
             {
-                failures.Add(Format(metadata, result));
+                failures.Add(Format(metadata, result, type));
             }
         }
 
         return failures;
     }
 
-    private static VerificationFailure Format(MetadataReader metadata, VerificationResult result)
+    private static VerificationFailure Format(
+        MetadataReader metadata, VerificationResult result, TypeDefinitionHandle verifiedType = default)
     {
         string location = "<assembly>";
+        TypeDefinitionHandle typeHandle = result.Type.IsNil ? verifiedType : result.Type;
         if (!result.Method.IsNil)
         {
             MethodDefinition method = metadata.GetMethodDefinition(result.Method);
             TypeDefinition type = metadata.GetTypeDefinition(method.GetDeclaringType());
             location = metadata.GetString(type.Name) + "." + metadata.GetString(method.Name);
         }
-        else if (!result.Type.IsNil)
+        else if (!typeHandle.IsNil)
         {
-            location = metadata.GetString(metadata.GetTypeDefinition(result.Type).Name);
+            location = metadata.GetString(metadata.GetTypeDefinition(typeHandle).Name);
         }
 
         ErrorArgument[] arguments = result.ErrorArguments ?? [];
@@ -66,7 +69,12 @@ internal static class IlVerification
 
         string details = string.Join(", ", arguments.Select(a => $"{a.Name}={a.Value}"));
         string code = result.ExceptionID?.ToString() ?? result.Code.ToString();
-        return new VerificationFailure(result.Code, $"{location}: {code}: {result.Message} [{details}]");
+        // Type-definition diagnostics use positional Args rather than the
+        // method verifier's named ErrorArguments.
+        string message = result.Args is { Length: > 0 }
+            ? string.Format(CultureInfo.InvariantCulture, result.Message, result.Args)
+            : result.Message;
+        return new VerificationFailure(result.Code, $"{location}: {code}: {message} [{details}]");
     }
 
     // Resolve facades and their forwarded types from the framework actually
@@ -77,12 +85,19 @@ internal static class IlVerification
     {
         private readonly Dictionary<string, PEReader> _readers = new(StringComparer.OrdinalIgnoreCase);
 
-        public PEReader ResolveAssembly(AssemblyNameInfo assemblyName)
+        public PEReader? ResolveAssembly(AssemblyNameInfo assemblyName)
         {
             string name = assemblyName.Name;
             if (!_readers.TryGetValue(name, out PEReader? reader))
             {
                 string path = Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), name + ".dll");
+                // Let ILVerify report an unresolved reference with its assembly
+                // name instead of aborting verification with FileNotFoundException.
+                if (!File.Exists(path))
+                {
+                    return null;
+                }
+
                 reader = new PEReader(File.OpenRead(path));
                 _readers.Add(name, reader);
             }

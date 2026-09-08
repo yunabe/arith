@@ -1,7 +1,10 @@
 using System.Buffers.Binary;
 using System.Collections.Immutable;
+using System.Reflection;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Text;
 
 using Arith.Compiler.Syntax;
 using Arith.Compiler.Text;
@@ -195,6 +198,77 @@ public sealed class IlVerificationTests
             }
             """;
         IlVerification.AssertValid(Compile(source, debug));
+    }
+
+    [Fact]
+    public void MissingAssembly_ReportsUnresolvedReferenceWithMethodName()
+    {
+        ImmutableArray<byte> valid = Compile("fn main() { print(1); }", debug: false);
+        IlVerification.AssertValid(valid);
+        using PEReader pe = new(valid);
+        MetadataReader metadata = pe.GetMetadataReader();
+        StringHandle name = metadata.AssemblyReferences
+            .Select(h => metadata.GetAssemblyReference(h).Name)
+            .Single(h => metadata.GetString(h) == "System.Console");
+        byte[] corrupted = valid.ToArray();
+        byte[] replacement = Encoding.UTF8.GetBytes("MissingConsole");
+        Assert.Equal(Encoding.UTF8.GetByteCount(metadata.GetString(name)), replacement.Length);
+        int nameOffset = pe.PEHeaders.MetadataStartOffset
+            + metadata.GetHeapMetadataOffset(HeapIndex.String) + MetadataTokens.GetHeapOffset(name);
+        replacement.CopyTo(corrupted, nameOffset);
+
+        IReadOnlyList<VerificationFailure> failures = IlVerification.Verify([.. corrupted]);
+        Assert.Contains(failures, f => f.Message.Contains("Program.main:", StringComparison.Ordinal)
+            && f.Message.Contains("FileLoadErrorGeneric", StringComparison.Ordinal)
+            && f.Message.Contains("MissingConsole", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DuplicateInterfaceImplementation_IsRejectedWithoutMethodBodies()
+    {
+        IlVerification.AssertValid(CreateInterfaceFixture(duplicate: false));
+        VerificationFailure failure = Assert.Single(IlVerification.Verify(CreateInterfaceFixture(duplicate: true)));
+        Assert.Equal(VerifierError.InterfaceImplHasDuplicate, failure.Code);
+        Assert.StartsWith("Implementation: InterfaceImplHasDuplicate:", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("IMarker", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("{0}", failure.Message, StringComparison.Ordinal);
+    }
+
+    private static ImmutableArray<byte> CreateInterfaceFixture(bool duplicate)
+    {
+        // No MethodDef rows: only the type-definition pass can reject this.
+        // Arith has no interfaces, so construct a tiny metadata-only library.
+        MetadataBuilder metadata = new();
+        metadata.AddModule(0, metadata.GetOrAddString("interfaces.dll"),
+            metadata.GetOrAddGuid(Guid.NewGuid()), default, default);
+        metadata.AddAssembly(metadata.GetOrAddString("interfaces"), new Version(1, 0, 0, 0),
+            default, default, 0, AssemblyHashAlgorithm.None);
+        AssemblyName core = typeof(object).Assembly.GetName();
+        AssemblyReferenceHandle coreRef = metadata.AddAssemblyReference(
+            metadata.GetOrAddString(core.Name!), core.Version!, default,
+            metadata.GetOrAddBlob(core.GetPublicKeyToken()!), 0, default);
+        TypeReferenceHandle objectRef = metadata.AddTypeReference(coreRef,
+            metadata.GetOrAddString("System"), metadata.GetOrAddString("Object"));
+        FieldDefinitionHandle firstField = MetadataTokens.FieldDefinitionHandle(1);
+        MethodDefinitionHandle firstMethod = MetadataTokens.MethodDefinitionHandle(1);
+        metadata.AddTypeDefinition(TypeAttributes.NotPublic, default,
+            metadata.GetOrAddString("<Module>"), default, firstField, firstMethod);
+        TypeDefinitionHandle marker = metadata.AddTypeDefinition(
+            TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract, default,
+            metadata.GetOrAddString("IMarker"), default, firstField, firstMethod);
+        TypeDefinitionHandle implementation = metadata.AddTypeDefinition(TypeAttributes.Public, default,
+            metadata.GetOrAddString("Implementation"), objectRef, firstField, firstMethod);
+        metadata.AddInterfaceImplementation(implementation, marker);
+        if (duplicate)
+        {
+            metadata.AddInterfaceImplementation(implementation, marker);
+        }
+
+        ManagedPEBuilder builder = new(PEHeaderBuilder.CreateLibraryHeader(),
+            new MetadataRootBuilder(metadata), new BlobBuilder());
+        BlobBuilder image = new();
+        builder.Serialize(image);
+        return image.ToImmutableArray();
     }
 
     [Theory]

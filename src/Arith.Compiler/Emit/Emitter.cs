@@ -1288,6 +1288,8 @@ public sealed class Emitter
             // forward scan (ECMA-335 III.1.7.5, enforced by ILVerify).
             // Enclosing expressions may have operands on the stack; jumping
             // over the body first would give it an assumed empty stack.
+            // Statement-level while/for/foreach loops always enter with an
+            // empty stack, so their loop layouts need no such change.
             LabelHandle test = _il.DefineLabel();
             LabelHandle exit = _il.DefineLabel();
             _il.MarkLabel(test);

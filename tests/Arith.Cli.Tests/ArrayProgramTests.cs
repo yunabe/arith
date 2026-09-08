@@ -202,10 +202,12 @@ public sealed class ArrayProgramTests : IDisposable
     [Theory]
     [InlineData(0, false)]
     [InlineData(0, true)]
-    [InlineData(3, false)]
-    [InlineData(3, true)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
     public void Run_RepeatWithPendingOperands_PreservesValuesAndEvaluationOrder(int count, bool debug)
     {
+        // Keep the nonzero count distinct from the fill value (3), so loading
+        // countSlot instead of valueSlot in the fill loop cannot pass unnoticed.
         string source = WriteSource("repeat-operands.arith", """
             fn note(v: i64) -> i64 { print(v); return v; }
             fn select(n: i64, values: []i64) -> i64 { return n + len(values); }
