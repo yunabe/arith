@@ -64,11 +64,11 @@ public sealed class Binder
             BoundBlock body = BindFunctionBody(syntax, symbol);
             if (_functions.TryGetValue(symbol.Name, out FunctionSymbol? declared) && ReferenceEquals(declared, symbol))
             {
-                functions.Add(new BoundFunction(symbol, body));
+                functions.Add(new BoundFunction(symbol, body) { Span = syntax.Span });
             }
         }
 
-        return new BoundProgram(functions.ToImmutable(), _functions.GetValueOrDefault("main"));
+        return new BoundProgram(functions.ToImmutable(), _functions.GetValueOrDefault("main")) { Span = root.Span };
     }
 
     private static FunctionSymbol BindFunctionSignature(FunctionDeclarationSyntax syntax)
@@ -217,10 +217,13 @@ public sealed class Binder
             PopScope();
         }
 
-        return new BoundBlock(statements.MoveToImmutable());
+        return new BoundBlock(statements.MoveToImmutable()) { Span = syntax.Span };
     }
 
-    private BoundStatement BindStatement(StatementSyntax syntax)
+    private BoundStatement BindStatement(StatementSyntax syntax) =>
+        BindStatementCore(syntax) with { Span = syntax.Span };
+
+    private BoundStatement BindStatementCore(StatementSyntax syntax)
     {
         switch (syntax)
         {
@@ -566,7 +569,10 @@ public sealed class Binder
     private BoundExpression ResolveToDefault(BoundExpression bound) =>
         bound.Type.IsPending ? ResolvePending(bound, bound.Type.DefaultForPending) : bound;
 
-    private BoundExpression BindExpression(ExpressionSyntax syntax, ArithType? expected)
+    private BoundExpression BindExpression(ExpressionSyntax syntax, ArithType? expected) =>
+        BindExpressionCore(syntax, expected) with { Span = syntax.Span };
+
+    private BoundExpression BindExpressionCore(ExpressionSyntax syntax, ArithType? expected)
     {
         switch (syntax)
         {
@@ -1145,7 +1151,10 @@ public sealed class Binder
     /// minus, and arithmetic over them — to the given concrete type. This is
     /// the moment of literal parsing and range checking (design §4.4).
     /// </summary>
-    private BoundExpression ResolvePending(BoundExpression bound, ArithType target)
+    private BoundExpression ResolvePending(BoundExpression bound, ArithType target) =>
+        ResolvePendingCore(bound, target) with { Span = bound.Span };
+
+    private BoundExpression ResolvePendingCore(BoundExpression bound, ArithType target)
     {
         Debug.Assert(!target.IsPending && !target.IsError, "resolution target must be concrete");
         switch (bound)

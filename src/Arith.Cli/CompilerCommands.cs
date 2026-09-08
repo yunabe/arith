@@ -76,7 +76,7 @@ internal static partial class CompilerCommands
         IReadOnlyList<string> written;
         try
         {
-            written = ArtifactWriter.Write(resolvedOutputDirectory, name, result.PeImage);
+            written = ArtifactWriter.Write(resolvedOutputDirectory, name, result.PeImage, result.PdbImage);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -118,7 +118,7 @@ internal static partial class CompilerCommands
         {
             try
             {
-                ArtifactWriter.Write(temporaryDirectory, name, result.PeImage);
+                ArtifactWriter.Write(temporaryDirectory, name, result.PeImage, result.PdbImage);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -163,10 +163,10 @@ internal static partial class CompilerCommands
     private static (EmitResult Result, SourceText Source)? CompileFile(
         string sourcePath, string assemblyName, TextWriter error)
     {
-        string text;
+        SourceText source;
         try
         {
-            text = File.ReadAllText(sourcePath);
+            source = SourceText.FromBytes(File.ReadAllBytes(sourcePath), sourcePath);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -174,7 +174,6 @@ internal static partial class CompilerCommands
             return null;
         }
 
-        SourceText source = SourceText.From(text, sourcePath);
         Compilation compilation = Compilation.Create(SyntaxTree.Parse(source));
         return (compilation.Emit(assemblyName), source);
     }

@@ -271,7 +271,60 @@ and takes seconds); run it with:
 dotnet test --project tests/Arith.Cli.Tests -- --explicit on
 ```
 
-## 7. Inspecting the output
+## 7. Portable PDB and source locations
+
+The PE tells the runtime **what to execute**. A Portable PDB adds the
+correspondence between **IL offsets and source ranges**, without changing the
+language or translating through C#. `arith build` now writes a matching
+`<name>.pdb`, and `arith run` keeps that PDB beside its temporary assembly.
+The runtime can use it when formatting exception stack traces.
+
+The source mapping passes through three stages:
+
+1. `Binder` copies each syntax span onto its bound node and preserves spans
+   when it resolves pending literals. Positions are offsets in the decoded
+   UTF-16 text, just as for compile-time diagnostics.
+2. `FunctionBodyEmitter` records `InstructionEncoder.Offset` with the current
+   source span. After evaluating operands, it restores the parent expression's
+   span before emitting the operation itself. For a multiline `10 / 0`, the
+   `div` instruction therefore maps to the division, not just the `0`.
+   Points at the same offset are replaced, and consecutive identical ranges
+   are coalesced. Generated loop increments, array-fill loops, and implicit
+   returns have hidden points; the generated `<Main>` bridge has no source.
+3. `PortablePdbEmitter` builds the PDB metadata and links it from the PE:
+
+   | Record | Purpose |
+   | --- | --- |
+   | `Document` | Absolute source path and SHA-256 checksum of the original bytes, including any BOM. In-memory string inputs use UTF-8 without a BOM and a fallback `<assembly-name>.arith` path. |
+   | `MethodDebugInformation` | One row per PE `MethodDef`, including an empty row for the bridge; contains the method's sequence-point blob. |
+   | Sequence-point blob | Local-signature row number, then IL-offset deltas and source ranges. Hidden points encode zero line/column deltas. |
+   | PE CodeView entry | Sibling PDB filename and the content ID returned by `PortablePdbBuilder.Serialize`. |
+   | PE PDB checksum entry | SHA-256 of the serialized PDB bytes. |
+
+IL offsets must increase, but source lines need not: a `while` condition is
+emitted *after* its body. The blob therefore uses unsigned IL-offset deltas
+and signed source-position deltas after the first visible point. Tests read
+the blobs back with `MetadataReader` to check both directions, local-signature
+references, and the PE/PDB IDs. Very long lines have their columns clamped
+below the metadata reader's 16-bit limit; unrepresentable line numbers become
+hidden points. The format is specified in the runtime's
+[Portable PDB metadata specification](https://github.com/dotnet/runtime/blob/main/docs/design/specs/PortablePdb-Metadata.md).
+
+Keep the `.dll` and its matching `.pdb` together when distributing managed
+output. The `.arith` source does not have to exist to format a stack trace;
+it is needed to view source in a debugger and is not embedded in the PDB.
+No other language's debugger GUID is assigned to Arith, and local-variable
+scopes, source embedding, and expression evaluation are not implemented.
+
+JIT optimization stays enabled. As with C# Release builds, inlining can remove
+frames and code motion can make a runtime line approximate even though the
+IL-to-source map is precise; emitting symbols alone does not disable those
+optimizations ([`DebuggableAttribute.DebuggingModes`](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.debuggableattribute.debuggingmodes?view=net-10.0)).
+NativeAOT debug information also needs to pass through ILC into platform-native
+symbols. That packaging is separate work: `--aot` still exports only the native
+executable, and this Portable PDB change makes no native source-line guarantee.
+
+## 8. Inspecting the output
 
 Useful tools to look at the generated file:
 

@@ -46,18 +46,19 @@ public sealed class Compilation
     }
 
     /// <summary>
-    /// Emits the program as an in-memory PE image. Emission is gated on an
+    /// Emits the program as matching in-memory PE and Portable PDB images. Emission is gated on an
     /// error-free compile (design §3): with errors, the result carries the
-    /// diagnostics and no image.
+    /// diagnostics and neither image.
     /// </summary>
     public EmitResult Emit(string assemblyName)
     {
         if (HasErrors)
         {
-            return new EmitResult(success: false, Diagnostics, peImage: []);
+            return new EmitResult(success: false, Diagnostics, peImage: [], pdbImage: []);
         }
 
-        ImmutableArray<byte> peImage = Emitter.Emit(Program, assemblyName);
-        return new EmitResult(success: true, Diagnostics, peImage);
+        (ImmutableArray<byte> peImage, ImmutableArray<byte> pdbImage) =
+            Emitter.Emit(Program, assemblyName, SyntaxTree.Text);
+        return new EmitResult(success: true, Diagnostics, peImage, pdbImage);
     }
 }

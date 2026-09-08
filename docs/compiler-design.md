@@ -33,11 +33,11 @@ src/
     Diagnostics/             Diagnostic, DiagnosticBag, error codes
     Syntax/                  tokens, lexer, AST nodes, parser
     Binding/                 symbols, bound (typed) tree, binder/type checker
-    Emit/                    IL + metadata emission (in-memory PE image)
+    Emit/                    IL + metadata + Portable PDB emission (in-memory images)
     Compilation.cs           facade tying the stages together
   Arith.Cli/                 existing: `build` / `run` / `version` commands, thin
                              wrappers over Arith.Compiler, plus the artifact
-                             writer (dll/runtimeconfig/launchers, AOT packaging)
+                             writer (dll/pdb/runtimeconfig/launchers, AOT packaging)
 tests/
   Arith.Compiler.Tests/      new: unit tests per stage
   Arith.Cli.Tests/           existing: CLI and end-to-end tests
@@ -52,19 +52,19 @@ until the real emitter supersedes it.
 ## 3. Pipeline overview
 
 ```text
-string (source)
-    ↓  SourceText.From
+source bytes (CLI) / string (library)
+    ↓  SourceText.FromBytes / SourceText.From
 SourceText
     ↓  Lexer
 ImmutableArray<Token>
     ↓  Parser
 CompilationUnitSyntax (AST)             ← purely syntactic, no types
     ↓  Binder (two passes)
-BoundProgram (bound tree + symbols)     ← every expression carries its Type
+BoundProgram (bound tree + symbols)     ← resolved types and source spans
     ↓  Emitter
-EmitResult (in-memory PE image + diagnostics)
+EmitResult (in-memory PE + Portable PDB images + diagnostics)
     ↓  CLI artifact writer
-<name>.dll + <name>.runtimeconfig.json + launchers
+<name>.dll + <name>.pdb + <name>.runtimeconfig.json + launchers
 ```
 
 Every stage appends to a shared `DiagnosticBag` instead of throwing, and
@@ -85,6 +85,8 @@ hierarchies** (Roslyn-style) rather than one mutable AST annotated in place:
 - The bound tree mirrors the *semantics*: identifiers become symbol references,
   every expression node has a resolved `Type`, and syntax-only distinctions can
   already be normalized (e.g. `else if` chains are just nested bound ifs).
+  Nodes retain their originating `TextSpan`, including through pending-literal
+  rewrites; a null span denotes generated code with no source location.
 
 For a language this small the duplication is cheap, and it keeps the type
 checker honest: the emitter consumes only bound nodes, so it can never
@@ -327,9 +329,9 @@ keeping its SRM approach. Structure:
      why relying on the tiny-header default is a trap).
 3. **Assembly assembly** — metadata tables, entry-point wiring (a `void main`
    still yields exit code 0; an `i32 main`'s return value is the exit code),
-   and `ManagedPEBuilder`. The emitter's product is an **in-memory PE image**
+   and `ManagedPEBuilder`. The emitter's products are **in-memory PE and Portable PDB images**
    inside an `EmitResult` (section 4.6); it does not touch the file system.
-   Writing `<name>.dll`, `runtimeconfig.json`, and the POSIX/Windows
+   Writing `<name>.dll`, `<name>.pdb`, `runtimeconfig.json`, and the POSIX/Windows
    launchers is the CLI artifact writer's job, and the `--aot` mode packages
    the same `EmitResult` bytes via `NativeAotPublisher` — so there is exactly
    one IL-generation path.
@@ -352,6 +354,18 @@ keeping its SRM approach. Structure:
    shared by several call sites, it moves into a real C# runtime library
    (an `Arith.Runtime.dll` shipped by the artifact writer) instead of
    growing more hand-emitted IL.
+5. **Source mapping** — each function emitter records sequence points at
+   method-relative IL offsets. Statements and expressions contribute source
+   ranges; a parent operation restores its own range after emitting operands,
+   so a checked conversion or division is not attributed to its last operand.
+   Generated loop control, array-fill loops, and implicit returns use hidden
+   points. The bridge gets an empty `MethodDebugInformation` row, keeping that
+   table aligned with every PE `MethodDef`. `PortablePdbEmitter` writes the
+   document, SHA-256 source checksum, and compressed sequence-point blobs;
+   `PortablePdbBuilder` serializes them. A PE debug directory holds the matching
+   CodeView PDB ID/name and PDB checksum. No file I/O or C# compilation is involved.
+   See [the emission walkthrough](il-emission-notes.md#7-portable-pdb-and-source-locations)
+   for the encoding and the limits of optimized stack traces.
 
 ### 4.6 Compilation facade and CLI
 
@@ -359,24 +373,27 @@ keeping its SRM approach. Structure:
 SyntaxTree syntaxTree = SyntaxTree.Parse(sourceText);       // lex + parse only
 Compilation compilation = Compilation.Create(syntaxTree);   // bind
 EmitResult result = compilation.Emit(assemblyName);
-// EmitResult: Success, Diagnostics (all stages), PE image bytes when Success
+// EmitResult: Success, Diagnostics (all stages), PeImage and PdbImage when Success
 ```
 
 `SyntaxTree.Parse` stops at syntax (as the name promises), `Compilation` owns
-semantics, and `Emit` returns the PE image as bytes plus the accumulated
+semantics, and `Emit` returns PE and Portable PDB bytes plus the accumulated
 diagnostics instead of writing files. The compiler library never touches the
 output directory; a CLI-side **artifact writer** turns an `EmitResult` into
 on-disk artifacts, and every packaging mode consumes the same bytes:
 
 - `arith build <file.arith> [-o <dir>]` — compile; on failure print each
   diagnostic as `file:line:col: error ARITHxxxx: message` and exit 1; on
-  success write `<name>.dll`, `<name>.runtimeconfig.json`, and the launchers.
+  success write `<name>.dll`, `<name>.pdb`, `<name>.runtimeconfig.json`, and the launchers.
 - `arith run <file.arith>` — build into a temp/cache directory, then execute
   via the `dotnet` host (reusing `ProcessRunner`), forwarding stdout and
   stderr as they arrive with bounded buffers, then returning the exit code.
+  The matching PDB remains beside the assembly until execution finishes.
 - `arith build <file.arith> --aot` hands the same `EmitResult` bytes to
   `NativeAotPublisher`, which produces a single native executable: AOT is
-  packaging, not a second emission path.
+  packaging, not a second emission path. This mode currently consumes only the
+  PE image; forwarding symbols to ILC and packaging native debug symbols are
+  separate work from Portable PDB emission for the managed host.
 - `arith experiment build-fib-command` remained until the real pipeline
   covered it, and was retired once `arith build --aot` took over its AOT mode
   (docs/il-emission-notes.md stays as the guided tour of the techniques).

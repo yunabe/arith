@@ -34,6 +34,43 @@ public sealed class BuildRunCommandTests : IDisposable
     private static string[] Lines(string text) =>
         [.. text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line.TrimEnd('\r'))];
 
+    [Theory]
+    [InlineData("print(10 / 0);", "DivideByZeroException")]
+    [InlineData("print(9223372036854775807 + 1);", "OverflowException")]
+    [InlineData("print([1][2]);", "IndexOutOfRangeException")]
+    [InlineData("print(i64(\"invalid\"));", "FormatException")]
+    [InlineData("print(f\"result: ${10 / 0}\");", "DivideByZeroException")]
+    public void Run_RuntimeExceptionIncludesOriginalSourceLine(string statement, string exceptionName)
+    {
+        string source = WriteSource("fault.arith", "fn main() {\n    " + statement + "\n}\n");
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.NotEqual(0, result.ExitCode);
+        Assert.Contains(exceptionName, result.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 2", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_MovedArtifactsRetainSourceLocationsWithoutTheSourceFile()
+    {
+        string source = WriteSource("fault.arith", "fn main(n: i64) {\n    print(10 / n);\n}\n");
+        string output = Path.Combine(_directory, "out");
+        string moved = Path.Combine(_directory, "moved");
+        CliResult build = CliRunner.Run("build", source, "-o", output);
+        Assert.Equal(0, build.ExitCode);
+        Assert.True(File.Exists(Path.Combine(output, "fault.pdb")));
+        Directory.Move(output, moved);
+        File.Delete(source);
+
+        ProcessResult run = ProcessRunner.Run(new ProcessStartInfo(
+            "dotnet", [Path.Combine(moved, "fault.dll"), "0"]));
+
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Contains("DivideByZeroException", run.Error, StringComparison.Ordinal);
+        Assert.Contains(source + ":line 2", run.Error, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Run_SubsetProgram_PrintsEveryValueKind()
     {
@@ -831,6 +868,7 @@ public sealed class BuildRunCommandTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         string assemblyPath = Path.Combine(outputDirectory, "hello.dll");
         Assert.True(File.Exists(assemblyPath));
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "hello.pdb")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "hello.runtimeconfig.json")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "hello")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "hello.cmd")));

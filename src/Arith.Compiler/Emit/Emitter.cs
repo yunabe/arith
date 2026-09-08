@@ -6,6 +6,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 
 using Arith.Compiler.Binding;
+using Arith.Compiler.Text;
 
 namespace Arith.Compiler.Emit;
 
@@ -33,6 +34,7 @@ public sealed class Emitter
     private readonly MetadataBuilder _metadata = new();
     private readonly BlobBuilder _ilStream = new();
     private readonly MethodBodyStreamEncoder _bodyStream;
+    private readonly PortablePdbEmitter _debug;
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, TypeReferenceHandle> _primitiveTypeRefs = [];
     private readonly Dictionary<ArithType, TypeSpecificationHandle> _typeSpecs = [];
@@ -51,17 +53,24 @@ public sealed class Emitter
     private MemberReferenceHandle _textWriterWriteLine;
     private TypeReferenceHandle _objectType;
 
-    private Emitter() => _bodyStream = new MethodBodyStreamEncoder(_ilStream);
+    private Emitter(SourceText source, string assemblyName)
+    {
+        _bodyStream = new MethodBodyStreamEncoder(_ilStream);
+        _debug = new PortablePdbEmitter(source, assemblyName);
+    }
 
-    /// <summary>Emits the PE image for an error-free bound program.</summary>
-    public static ImmutableArray<byte> Emit(BoundProgram program, string assemblyName)
+    /// <summary>Emits matching PE and Portable PDB images for an error-free bound program.</summary>
+    public static (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) Emit(
+        BoundProgram program, string assemblyName, SourceText source)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentException.ThrowIfNullOrEmpty(assemblyName);
-        return new Emitter().EmitProgram(program, assemblyName);
+        ArgumentNullException.ThrowIfNull(source);
+        return new Emitter(source, assemblyName).EmitProgram(program, assemblyName);
     }
 
-    private ImmutableArray<byte> EmitProgram(BoundProgram program, string assemblyName)
+    private (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) EmitProgram(
+        BoundProgram program, string assemblyName)
     {
         Debug.Assert(program.EntryPoint is not null, "an error-free program has an entry point");
         Debug.Assert(!program.Functions.IsEmpty, "an error-free program has at least main");
@@ -129,6 +138,7 @@ public sealed class Emitter
         // the string[] and enforces spec §5.1 — including a parameterless
         // main, which must still reject any argument with the usage message.
         int bridgeOffset = EmitEntryPointBridgeBody(program.EntryPoint!, assemblyName);
+        _debug.AddMethod(default, []);
         ParameterHandle bridgeParameter = MetadataTokens.ParameterHandle(parameterRow);
         _metadata.AddParameter(
             ParameterAttributes.None, _metadata.GetOrAddString("args"), sequenceNumber: 1);
@@ -162,15 +172,19 @@ public sealed class Emitter
             fieldList: MetadataTokens.FieldDefinitionHandle(1),
             methodList: MetadataTokens.MethodDefinitionHandle(1));
 
+        DebugDirectoryBuilder debugDirectory = new();
+        ImmutableArray<byte> pdbImage = _debug.Serialize(
+            _metadata.GetRowCounts(), entryPoint, assemblyName + ".pdb", debugDirectory);
         ManagedPEBuilder peBuilder = new(
             PEHeaderBuilder.CreateExecutableHeader(),
             new MetadataRootBuilder(_metadata),
             _ilStream,
+            debugDirectoryBuilder: debugDirectory,
             entryPoint: entryPoint,
             flags: CorFlags.ILOnly);
         BlobBuilder peBlob = new();
         peBuilder.Serialize(peBlob);
-        return [.. peBlob.ToArray()];
+        return ([.. peBlob.ToArray()], pdbImage);
     }
 
     private void AddRuntimeReferences()
@@ -519,6 +533,7 @@ public sealed class Emitter
 
         // maxStack is the tracked true depth, never the tiny-header default
         // (docs/il-emission-notes.md §4).
+        _debug.AddMethod(localSignature, body.SequencePoints);
         return _bodyStream.AddMethodBody(il, body.MaxStack, localVariablesSignature: localSignature);
     }
 
@@ -658,6 +673,23 @@ public sealed class Emitter
 
         public int MaxStack { get; private set; }
 
+        public List<SourceSequencePoint> SequencePoints { get; } = [];
+
+        private void MarkSequencePoint(TextSpan? span)
+        {
+            // No nop is needed: the next instruction owns this range. Several
+            // nested nodes may begin at the same offset; keep the innermost.
+            if (SequencePoints.Count > 0 && SequencePoints[^1].Offset == _il.Offset)
+            {
+                SequencePoints.RemoveAt(SequencePoints.Count - 1);
+            }
+
+            if (SequencePoints.Count == 0 || SequencePoints[^1].Span != span)
+            {
+                SequencePoints.Add(new SourceSequencePoint(_il.Offset, span));
+            }
+        }
+
         public void Emit(BoundFunction function)
         {
             bool returned = EmitBlock(function.Body);
@@ -666,6 +698,7 @@ public sealed class Emitter
                 Debug.Assert(
                     function.Symbol.ReturnType == ArithType.Void,
                     "the binder guarantees value-returning functions contain a return");
+                MarkSequencePoint(null);
                 _il.OpCode(ILOpCode.Ret);
             }
         }
@@ -687,6 +720,11 @@ public sealed class Emitter
         /// <summary>Emits one statement; true when it definitely returned.</summary>
         private bool EmitStatement(BoundStatement statement)
         {
+            if (statement is not BoundBlock)
+            {
+                MarkSequencePoint(statement.Span);
+            }
+
             switch (statement)
             {
                 case BoundBlock block:
@@ -706,6 +744,7 @@ public sealed class Emitter
                     {
                         EmitVariableLoad(assignment.Variable);
                         EmitExpression(assignment.Value);
+                        MarkSequencePoint(assignment.Span);
                         EmitBinaryOperator(op, assignment.Variable.Type);
                     }
                     else
@@ -806,6 +845,7 @@ public sealed class Emitter
         /// <summary>Test-at-top loop: `br TEST; BODY: body; TEST: cond; brtrue BODY`.</summary>
         private void EmitWhileStatement(BoundWhileStatement loop)
         {
+            MarkSequencePoint(null);
             LabelHandle body = _il.DefineLabel();
             LabelHandle test = _il.DefineLabel();
             LabelHandle exit = _il.DefineLabel();
@@ -840,6 +880,7 @@ public sealed class Emitter
             _il.StoreLocal(endSlot);
             Pop();
 
+            MarkSequencePoint(null);
             LabelHandle body = _il.DefineLabel();
             LabelHandle exit = _il.DefineLabel();
             if (!loop.IsInclusive)
@@ -878,6 +919,7 @@ public sealed class Emitter
                 EmitStatement(loop.Body);
                 _loops.RemoveAt(_loops.Count - 1);
                 _il.MarkLabel(check);
+                MarkSequencePoint(null);
                 _il.LoadLocal(variableSlot);
                 Push();
                 _il.LoadLocal(endSlot);
@@ -907,6 +949,7 @@ public sealed class Emitter
 
             // Spec §9.3: the array expression evaluates once, before the loop.
             EmitExpression(loop.Array);
+            MarkSequencePoint(null);
             _il.OpCode(ILOpCode.Dup);
             Push();
             _il.StoreLocal(arraySlot);
@@ -954,6 +997,7 @@ public sealed class Emitter
         /// <summary>`i = i + 1` with a plain add — callers guarantee `i &lt; end` here.</summary>
         private void EmitVariableIncrement(int slot)
         {
+            MarkSequencePoint(null);
             _il.LoadLocal(slot);
             Push();
             _il.LoadConstantI8(1);
@@ -968,6 +1012,7 @@ public sealed class Emitter
         private void EmitPrint(BoundPrintStatement print)
         {
             EmitExpression(print.Argument);
+            MarkSequencePoint(print.Span);
             EmitConvertToString(print.Argument.Type);
             _il.Call(_emitter._consoleWriteLineString);
             Pop();
@@ -1018,6 +1063,7 @@ public sealed class Emitter
 
         private void EmitExpression(BoundExpression expression)
         {
+            MarkSequencePoint(expression.Span);
             switch (expression)
             {
                 case BoundLiteralExpression literal:
@@ -1028,6 +1074,7 @@ public sealed class Emitter
                     break;
                 case BoundUnaryExpression { OperatorKind: BoundUnaryOperatorKind.LogicalNegation } unary:
                     EmitExpression(unary.Operand);
+                    MarkSequencePoint(unary.Span);
                     EmitBooleanNegation();
                     break;
                 case BoundUnaryExpression unary:
@@ -1048,12 +1095,14 @@ public sealed class Emitter
 
                         Push();
                         EmitExpression(unary.Operand);
+                        MarkSequencePoint(unary.Span);
                         _il.OpCode(ILOpCode.Sub_ovf);
                         Pop();
                     }
                     else
                     {
                         EmitExpression(unary.Operand);
+                        MarkSequencePoint(unary.Span);
                         _il.OpCode(ILOpCode.Neg);
                     }
 
@@ -1069,15 +1118,18 @@ public sealed class Emitter
                 case BoundBinaryExpression binary when binary.Type == ArithType.Bool:
                     EmitExpression(binary.Left);
                     EmitExpression(binary.Right);
+                    MarkSequencePoint(binary.Span);
                     EmitComparisonOperator(binary.OperatorKind, binary.Left.Type);
                     break;
                 case BoundBinaryExpression binary:
                     EmitExpression(binary.Left);
                     EmitExpression(binary.Right);
+                    MarkSequencePoint(binary.Span);
                     EmitBinaryOperator(binary.OperatorKind, binary.Type);
                     break;
                 case BoundConversionExpression conversion:
                     EmitExpression(conversion.Operand);
+                    MarkSequencePoint(conversion.Span);
                     EmitConversion(conversion.Operand.Type, conversion.Type);
                     break;
                 case BoundCallExpression call:
@@ -1087,6 +1139,7 @@ public sealed class Emitter
                         EmitExpression(argument);
                     }
 
+                    MarkSequencePoint(call.Span);
                     _il.Call(_emitter._methodHandles[call.Function]);
                     Pop(call.Arguments.Length);
                     if (call.Function.ReturnType != ArithType.Void)
@@ -1106,6 +1159,7 @@ public sealed class Emitter
                 case BoundIndexExpression index:
                     EmitExpression(index.Array);
                     EmitExpression(index.Index);
+                    MarkSequencePoint(index.Span);
                     EmitIndexToNativeInt();
                     EmitLoadElement(index.Type);
                     Pop(); // Array and index in, element out.
@@ -1114,6 +1168,7 @@ public sealed class Emitter
                     // ldlen pushes a native unsigned int; a .NET array length
                     // always fits i64, so widen unsigned (design §7).
                     EmitExpression(len.Array);
+                    MarkSequencePoint(len.Span);
                     _il.OpCode(ILOpCode.Ldlen);
                     _il.OpCode(ILOpCode.Conv_u8);
                     break;
@@ -1170,12 +1225,14 @@ public sealed class Emitter
             _il.StoreLocal(countSlot);
             Pop();
             _il.OpCode(ILOpCode.Conv_ovf_u);
+            MarkSequencePoint(repeat.Span);
             _il.OpCode(ILOpCode.Newarr);
             _il.Token(_emitter.GetTypeHandle(elementType));
             _il.StoreLocal(arraySlot);
             Pop();
 
             // for (i = 0; i < count; i += 1) array[i] = value;
+            MarkSequencePoint(null);
             _il.LoadConstantI8(0);
             Push();
             _il.StoreLocal(indexSlot);
@@ -1202,6 +1259,7 @@ public sealed class Emitter
             _il.Branch(ILOpCode.Blt, body);
             Pop(2);
 
+            MarkSequencePoint(repeat.Span);
             _il.LoadLocal(arraySlot);
             Push();
         }
@@ -1217,8 +1275,10 @@ public sealed class Emitter
             {
                 EmitExpression(assignment.Array);
                 EmitExpression(assignment.Index);
+                MarkSequencePoint(assignment.Span);
                 EmitIndexToNativeInt();
                 EmitExpression(assignment.Value);
+                MarkSequencePoint(assignment.Span);
                 EmitStoreElement(assignment.ElementType);
                 Pop(3);
                 return;
@@ -1235,6 +1295,7 @@ public sealed class Emitter
 
             // array[i] = array[i] op value — the element read is the start
             // of the right-hand side, so it precedes the value (spec §8.4).
+            MarkSequencePoint(assignment.Span);
             _il.LoadLocal(arraySlot);
             Push();
             _il.LoadLocal(indexSlot);
@@ -1248,6 +1309,7 @@ public sealed class Emitter
             EmitLoadElement(assignment.ElementType);
             Pop();
             EmitExpression(assignment.Value);
+            MarkSequencePoint(assignment.Span);
             EmitBinaryOperator(op, assignment.ElementType);
             EmitStoreElement(assignment.ElementType);
             Pop(3);
