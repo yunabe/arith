@@ -4,6 +4,10 @@
 
 `arith-logo.svg` is a manually reconstructed vector version of that PNG, using regular circles, solid colors, and outlined lettering. It preserves the composition with small geometric and typographic differences, and contains no embedded raster image or font dependencies. The README displays the SVG at 440 pixels wide.
 
+`arith-logo-dark.svg` adapts the vector logo to a `#0f0f0f` background, following a second user-provided reference: an outlined dark first circle, blue and brighter violet middle circles, a white final circle, and white connecting arrow and lettering. Both SVGs use the same canvas and geometry for consistent sizing.
+
+The README uses `<picture>` with `prefers-color-scheme` to select the dark or light SVG on GitHub, with the light SVG as the fallback. See [GitHub's documentation](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/quickstart-for-writing-on-github).
+
 ## Generation prompt
 
 ```text

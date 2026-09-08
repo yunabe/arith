@@ -1,7 +1,11 @@
 # Arith
 
 <p align="center">
-  <img src="docs/assets/arith-logo.svg" alt="Arith logo: black, blue, violet, and outlined circles connected by a right-pointing arrow above the ARITH wordmark" width="440">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/arith-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/arith-logo.svg">
+    <img src="docs/assets/arith-logo.svg" alt="Arith logo: four circles connected by a right-pointing arrow above the ARITH wordmark" width="440">
+  </picture>
 </p>
 
 [![CI](https://github.com/yunabe/arith/actions/workflows/ci.yml/badge.svg)](https://github.com/yunabe/arith/actions/workflows/ci.yml)
