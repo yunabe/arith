@@ -1,5 +1,9 @@
 # Arith
 
+<p align="center">
+  <img src="docs/assets/arith-logo.svg" alt="Arith logo: black, blue, violet, and outlined circles connected by a right-pointing arrow above the ARITH wordmark" width="440">
+</p>
+
 [![CI](https://github.com/yunabe/arith/actions/workflows/ci.yml/badge.svg)](https://github.com/yunabe/arith/actions/workflows/ci.yml)
 
 Arith is a small programming language that compiles simple arithmetic programs into executable .NET assemblies.

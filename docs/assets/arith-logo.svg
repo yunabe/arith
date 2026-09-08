@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1774" height="887" viewBox="0 0 1774 887" role="img" aria-labelledby="title desc">
+  <title id="title">Arith</title>
+  <desc id="desc">Black, blue, violet, and outlined circles connected by a right-pointing arrow above the ARITH wordmark.</desc>
+  <rect width="1774" height="887" fill="#fff"/>
+  <g stroke="#14191e" stroke-width="16">
+    <path d="M264 350H1638"/>
+    <path d="m1607 316 34 34-34 34" fill="none" stroke-linejoin="miter"/>
+  </g>
+  <circle cx="264" cy="350" r="111" fill="#14191e"/>
+  <circle cx="641" cy="350" r="111" fill="#2045ff"/>
+  <circle cx="1018" cy="350" r="111" fill="#976aff"/>
+  <circle cx="1395" cy="350" r="97" fill="#fff" stroke="#14191e" stroke-width="28"/>
+  <!-- Outlined lettering keeps the wordmark independent of installed fonts. -->
+  <g fill="#14191e" transform="translate(489 617)">
+    <path fill-rule="evenodd" d="M0 100 40 0H65L106 100H79L71 78H33L25 100ZM40 58H64L52 25Z"/>
+    <path fill-rule="evenodd" d="M186 100V0H229C255 0 270 12 270 33 270 48 261 59 247 63L275 100H244L221 67H211V100ZM211 20V47H227C239 47 245 43 245 33S239 20 227 20Z"/>
+    <path d="M364 0H389V100H364Z"/>
+    <path d="M465 0H551V21H521V100H496V21H465Z"/>
+    <path d="M631 0H656V39H700V0H725V100H700V61H656V100H631Z"/>
+  </g>
+</svg>
