@@ -94,30 +94,6 @@ public sealed class Emitter
         return new Emitter(source, assemblyName, diagnostics, debug).EmitProgram(program, assemblyName, debug);
     }
 
-    /// <summary>
-    /// Emits matching PE and Portable PDB images for an error-free bound
-    /// program. With no <see cref="DiagnosticBag"/> to report to, a function
-    /// that exceeds a target limit (ARITH4xxx) is thrown as an
-    /// <see cref="InvalidOperationException"/> whose message lists the
-    /// diagnostics, never returned as an assembly the runtime would reject.
-    /// Prefer the overload taking a bag, as <see cref="Compilation.Emit"/> does.
-    /// </summary>
-    public static (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) Emit(
-        BoundProgram program, string assemblyName, SourceText source, bool debug = false)
-    {
-        DiagnosticBag diagnostics = new();
-        (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) images =
-            Emit(program, assemblyName, source, diagnostics, debug);
-        if (diagnostics.HasErrors)
-        {
-            throw new InvalidOperationException(
-                "the program exceeds a limit of the target runtime:"
-                + string.Concat(diagnostics.Select(d => Environment.NewLine + d)));
-        }
-
-        return images;
-    }
-
     private (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) EmitProgram(
         BoundProgram program, string assemblyName, bool debug)
     {
