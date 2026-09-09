@@ -29,6 +29,10 @@ All notable changes to Arith are recorded here. The format follows
 
 ### Fixed
 
+- Report `ARITH4001` when a function needs more than 65,535 local variable
+  slots (`let`s plus compiler-generated temporaries), instead of emitting an
+  assembly whose method throws `InvalidProgramException` when called. Every
+  function is checked so each offender is reported in one compile.
 - Emit repeat-array fill loops with the condition before the body, satisfying
   ILVerify's backward-branch rule when enclosing expressions leave operands
   on the stack (for example, `grid[0] = [value; count]`).

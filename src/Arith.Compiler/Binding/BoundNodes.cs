@@ -25,7 +25,14 @@ public sealed record BoundProgram(
     ImmutableArray<BoundFunction> Functions,
     FunctionSymbol? EntryPoint) : BoundNode;
 
-public sealed record BoundFunction(FunctionSymbol Symbol, BoundBlock Body) : BoundNode;
+public sealed record BoundFunction(FunctionSymbol Symbol, BoundBlock Body) : BoundNode
+{
+    /// <summary>
+    /// The declaration's identifier, where diagnostics about the function as
+    /// a whole point (as the binder's do); null for a generated function.
+    /// </summary>
+    public TextSpan? NameSpan { get; init; }
+}
 
 public abstract record BoundStatement : BoundNode;
 

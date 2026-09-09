@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace Arith.Cli.Tests;
 
@@ -1073,6 +1074,54 @@ public sealed class BuildRunCommandTests : IDisposable
         Assert.Equal(2, errors.Length);
         Assert.Equal($"{source}:2:18: error ARITH3012: integer literal '3000000000' is out of range for type 'i32'", errors[0]);
         Assert.Equal($"{source}:3:11: error ARITH3005: 'y' is not defined", errors[1]);
+        Assert.False(Directory.Exists(outputDirectory));
+    }
+
+    /// <summary>
+    /// `fn huge() { let v0 = 11; let v1 = 0; … print(v0); }` with the given
+    /// number of lets, plus a `main` that calls it — the issue #33 shape,
+    /// where the numeric print adds one compiler temporary to the count.
+    /// </summary>
+    private static string HugeFunctionProgram(int letCount)
+    {
+        StringBuilder source = new("fn huge() { let v0 = 11;");
+        for (int i = 1; i < letCount; i++)
+        {
+            source.Append(" let v").Append(i).Append(" = 0;");
+        }
+
+        return source.Append(" print(v0); }\nfn main() { huge(); }\n").ToString();
+    }
+
+    [Fact]
+    public void Run_FunctionAtTheRuntimeLocalSlotLimit_Executes()
+    {
+        // 65,534 lets plus the print temporary is exactly the 65,535 locals
+        // the CLR accepts; this is the last count that must keep running.
+        string source = WriteSource("locals-limit.arith", HugeFunctionProgram(65_534));
+
+        CliResult result = CliRunner.Run("run", source);
+
+        Assert.Equal("", result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(["11"], Lines(result.Output));
+    }
+
+    [Fact]
+    public void Build_FunctionPastTheRuntimeLocalSlotLimit_ReportsDiagnosticAndWritesNothing()
+    {
+        // 65,535 lets plus the print temporary used to build an assembly that
+        // threw InvalidProgramException when huge() was called (issue #33).
+        string source = WriteSource("locals-overflow.arith", HugeFunctionProgram(65_535));
+        string outputDirectory = Path.Combine(_directory, "out");
+
+        CliResult result = CliRunner.Run("build", source, "-o", outputDirectory);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(
+            [$"{source}:1:4: error ARITH4001: function 'huge' needs 65536 local variable slots (including compiler temporaries), but a .NET method can have at most 65535"],
+            Lines(result.Error));
+        Assert.Equal("", result.Output);
         Assert.False(Directory.Exists(outputDirectory));
     }
 

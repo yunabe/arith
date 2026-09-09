@@ -23,7 +23,7 @@ public sealed class EmitResult
 
     public bool Success { get; }
 
-    /// <summary>Every diagnostic from every stage, syntax first.</summary>
+    /// <summary>Every diagnostic from every stage, syntax first and emission's target-limit checks last.</summary>
     public ImmutableArray<Diagnostic> Diagnostics { get; }
 
     /// <summary>The emitted assembly bytes; empty unless <see cref="Success"/>.</summary>
