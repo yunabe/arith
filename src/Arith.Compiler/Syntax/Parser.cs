@@ -27,6 +27,24 @@ public sealed class Parser
     /// <summary>End of the last consumed token; node spans run from their first token to here.</summary>
     private int _lastEnd;
 
+    /// <summary>
+    /// How many statements, expressions, and index wraps are currently
+    /// open, capped at <see cref="SyntaxFacts.MaxNestingDepth"/>. The parser
+    /// recurses once per level (a precedence-climbing level, a parenthesis,
+    /// a call argument, a body block, …), and so do the binder and emitter
+    /// over the tree it builds, so bounding it here keeps every stage inside
+    /// the stack on pathological input (design §4.3).
+    /// </summary>
+    private int _nestingDepth;
+
+    /// <summary>
+    /// Whether ARITH2005 was already reported inside the current top-level
+    /// statement. Everything nested in a too-deep construct is too deep as
+    /// well (the condition, the body, the next `else if`), so one report
+    /// per statement says it all; the skips still happen silently.
+    /// </summary>
+    private bool _nestingTooDeepReported;
+
     private Parser(SourceText text, ImmutableArray<Token> tokens, DiagnosticBag diagnostics)
     {
         _text = text;
@@ -232,6 +250,24 @@ public sealed class Parser
 
     private StatementSyntax ParseStatement()
     {
+        if (_nestingDepth >= SyntaxFacts.MaxNestingDepth)
+        {
+            return SkipTooDeeplyNestedStatement();
+        }
+
+        _nestingDepth++;
+        StatementSyntax statement = ParseStatementCore();
+        _nestingDepth--;
+        if (_nestingDepth == 0)
+        {
+            _nestingTooDeepReported = false;
+        }
+
+        return statement;
+    }
+
+    private StatementSyntax ParseStatementCore()
+    {
         switch (Current.Kind)
         {
             case SyntaxKind.LetKeyword:
@@ -312,7 +348,10 @@ public sealed class Parser
         if (Current.Kind == SyntaxKind.ElseKeyword)
         {
             Consume();
-            elseClause = Current.Kind == SyntaxKind.IfKeyword ? ParseIfStatement() : ParseBlock();
+            // An `else if` nests one statement deeper (design §4.3: the
+            // bound tree is a nested if too), so it goes through
+            // ParseStatement to count toward the nesting limit.
+            elseClause = Current.Kind == SyntaxKind.IfKeyword ? ParseStatement() : ParseBlock();
         }
 
         return new IfStatementSyntax(condition, then, elseClause, SpanFrom(start));
@@ -444,12 +483,143 @@ public sealed class Parser
         }
     }
 
+    private void ReportNestingTooDeep(TextSpan span)
+    {
+        if (_nestingTooDeepReported)
+        {
+            return;
+        }
+
+        _nestingTooDeepReported = true;
+        _diagnostics.Report(ErrorCodes.NestingTooDeep, span, SyntaxFacts.MaxNestingDepth);
+    }
+
+    /// <summary>
+    /// Recovery for a statement that would nest past the limit: reports
+    /// ARITH2005 at its first token, then skips it iteratively — through
+    /// its `;`, or for a compound statement up to the next statement
+    /// keyword (an `if` after `else` belongs to the chain being skipped) or
+    /// the `}` that closes the enclosing block. Brackets are tracked so a
+    /// body block is consumed whole. The enclosing block then continues at
+    /// a token it can parse, so the one diagnostic stands alone.
+    /// </summary>
+    private ErrorStatementSyntax SkipTooDeeplyNestedStatement()
+    {
+        int start = Current.Span.Start;
+        ReportNestingTooDeep(Current.Span);
+        int depth = 0;
+        SyntaxKind previous = SyntaxKind.EndOfFileToken;
+        while (Current.Kind != SyntaxKind.EndOfFileToken)
+        {
+            SyntaxKind kind = Current.Kind;
+            if (depth == 0)
+            {
+                if (kind is SyntaxKind.CloseBraceToken or SyntaxKind.FnKeyword)
+                {
+                    break;
+                }
+
+                if (previous != SyntaxKind.EndOfFileToken && IsStatementKeyword(kind)
+                    && !(kind == SyntaxKind.IfKeyword && previous == SyntaxKind.ElseKeyword))
+                {
+                    break;
+                }
+
+                if (kind == SyntaxKind.SemicolonToken)
+                {
+                    Consume();
+                    break;
+                }
+            }
+
+            if (kind is SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or SyntaxKind.OpenBraceToken)
+            {
+                depth++;
+            }
+            else if (depth > 0
+                && kind is (SyntaxKind.CloseParenToken or SyntaxKind.CloseBracketToken or SyntaxKind.CloseBraceToken))
+            {
+                depth--;
+            }
+
+            previous = kind;
+            Consume();
+        }
+
+        return new ErrorStatementSyntax(SpanFrom(start));
+    }
+
+    private static bool IsStatementKeyword(SyntaxKind kind) => kind is
+        SyntaxKind.LetKeyword or SyntaxKind.ReturnKeyword or SyntaxKind.IfKeyword or
+        SyntaxKind.WhileKeyword or SyntaxKind.ForKeyword or SyntaxKind.BreakKeyword or
+        SyntaxKind.ContinueKeyword;
+
+    /// <summary>
+    /// Recovery for an expression that would nest past the limit: reports
+    /// ARITH2005 at its first token, then skips the rest of the enclosing
+    /// expression iteratively — up to a closer, `;`, `,`, `{`, or range
+    /// operator not matched by an opener consumed here. That leaves the
+    /// enclosing production at the token it expects (the `)` of the
+    /// parenthesis that went too deep, the `,` before the next argument),
+    /// so the one diagnostic stands alone.
+    /// </summary>
+    private ErrorExpressionSyntax SkipTooDeeplyNestedExpression()
+    {
+        int start = Current.Span.Start;
+        ReportNestingTooDeep(Current.Span);
+        int depth = 0;
+        while (Current.Kind != SyntaxKind.EndOfFileToken)
+        {
+            SyntaxKind kind = Current.Kind;
+            if (kind is SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or SyntaxKind.OpenBraceToken)
+            {
+                if (depth == 0 && kind == SyntaxKind.OpenBraceToken)
+                {
+                    break;
+                }
+
+                depth++;
+            }
+            else if (kind is SyntaxKind.CloseParenToken or SyntaxKind.CloseBracketToken or SyntaxKind.CloseBraceToken)
+            {
+                if (depth == 0)
+                {
+                    break;
+                }
+
+                depth--;
+            }
+            else if (depth == 0 && kind is (SyntaxKind.SemicolonToken or SyntaxKind.CommaToken or
+                SyntaxKind.DotDotToken or SyntaxKind.DotDotEqualsToken))
+            {
+                break;
+            }
+
+            Consume();
+        }
+
+        return new ErrorExpressionSyntax(SpanFrom(start));
+    }
+
     /// <summary>
     /// Precedence-climbing expression parser implementing the table in spec
     /// §8.5. Binary operators are left-associative; unary `-`/`!` bind
     /// tighter than every binary operator.
     /// </summary>
     private ExpressionSyntax ParseExpression(int parentPrecedence = 0)
+    {
+        if (_nestingDepth >= SyntaxFacts.MaxNestingDepth)
+        {
+            return SkipTooDeeplyNestedExpression();
+        }
+
+        _nestingDepth++;
+        ExpressionSyntax expression = ParseExpressionCore(parentPrecedence);
+        _nestingDepth--;
+        return expression;
+    }
+
+    private ExpressionSyntax ParseExpressionCore(int parentPrecedence)
     {
         int start = Current.Span.Start;
         ExpressionSyntax left;
@@ -497,14 +667,29 @@ public sealed class Parser
     {
         int start = Current.Span.Start;
         ExpressionSyntax expression = ParsePrimaryExpression();
+        int wraps = 0;
         while (Current.Kind == SyntaxKind.OpenBracketToken)
         {
+            // The loop builds `a[i][j]…` left-deep without recursing, but
+            // every later stage recurses once per `[`, so each wrap counts
+            // as a nesting level; past the limit the rest of the chain is
+            // skipped as one error expression.
+            if (_nestingDepth >= SyntaxFacts.MaxNestingDepth)
+            {
+                SkipTooDeeplyNestedExpression();
+                expression = new ErrorExpressionSyntax(SpanFrom(start));
+                break;
+            }
+
+            _nestingDepth++;
+            wraps++;
             Consume();
             ExpressionSyntax index = ParseExpression();
             MatchToken(SyntaxKind.CloseBracketToken);
             expression = new IndexExpressionSyntax(expression, index, SpanFrom(start));
         }
 
+        _nestingDepth -= wraps;
         return expression;
     }
 
@@ -627,9 +812,27 @@ public sealed class Parser
     /// </summary>
     private ExpressionSyntax ParseHoleExpression(TextSpan span)
     {
-        ImmutableArray<Token> tokens = Lexer.LexRange(_text, span, _diagnostics);
-        Parser parser = new(_text, tokens, _diagnostics);
+        // The hole is one level deeper than the literal. Check before
+        // re-lexing: past the limit neither stage may recurse into it. The
+        // re-lex is told that depth, so a literal nested in the hole whose
+        // own hole would be past the limit is refused by the lexer — the
+        // re-lex scans every nested literal at once, so that refusal turns
+        // this whole hole into one Bad token, reported once by the lexer
+        // and passed over silently here.
+        if (_nestingDepth >= SyntaxFacts.MaxNestingDepth)
+        {
+            ReportNestingTooDeep(span);
+            return new ErrorExpressionSyntax(span);
+        }
+
+        ImmutableArray<Token> tokens = Lexer.LexRange(_text, span, _diagnostics, holeDepth: _nestingDepth + 1);
+        Parser parser = new(_text, tokens, _diagnostics)
+        {
+            _nestingDepth = _nestingDepth,
+            _nestingTooDeepReported = _nestingTooDeepReported,
+        };
         ExpressionSyntax expression = parser.ParseExpression();
+        _nestingTooDeepReported = parser._nestingTooDeepReported;
 
         // A trailing Bad token was already reported by the lexer; drop the
         // run without a second diagnostic (cascade suppression), as

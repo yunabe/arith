@@ -29,6 +29,14 @@ All notable changes to Arith are recorded here. The format follows
 
 ### Fixed
 
+- Report `ARITH2005` ("nesting is too deep") instead of crashing the process
+  with a stack overflow when expressions or statements nest more than 256
+  levels deep — parentheses, unary operators, call arguments, array
+  literals, index chains, `if` bodies, `else if` chains, and nested
+  interpolated strings included. Flat operator chains such as
+  `1 + 1 + … + 1` no longer count as nesting: the binder, pending-literal
+  resolution, and the emitter walk them iteratively, so a 15,000-term sum
+  compiles and prints `15000`.
 - Emit repeat-array fill loops with the condition before the body, satisfying
   ILVerify's backward-branch rule when enclosing expressions leave operands
   on the stack (for example, `grid[0] = [value; count]`).

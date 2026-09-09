@@ -1112,11 +1112,15 @@ public sealed class Emitter
             // Every operand restores its parent's source scope before the
             // parent emits its own instructions, including checked operations.
             TextSpan? enclosing = _sourceSpan;
-            _sourceSpan = expression.Span;
-            MarkSequencePoint(_sourceSpan, emitBoundary: _emitter._debugMode);
+            EnterSourceScope(expression.Span);
             EmitExpressionCore(expression);
-            _sourceSpan = enclosing;
-            MarkSequencePoint(enclosing, emitBoundary: _emitter._debugMode);
+            EnterSourceScope(enclosing);
+        }
+
+        private void EnterSourceScope(TextSpan? span)
+        {
+            _sourceSpan = span;
+            MarkSequencePoint(span, emitBoundary: _emitter._debugMode);
         }
 
         private void EmitExpressionCore(BoundExpression expression)
@@ -1163,21 +1167,8 @@ public sealed class Emitter
                     break;
                 }
 
-                case BoundBinaryExpression
-                {
-                    OperatorKind: BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr,
-                } binary:
-                    EmitShortCircuit(binary);
-                    break;
-                case BoundBinaryExpression binary when binary.Type == ArithType.Bool:
-                    EmitExpression(binary.Left);
-                    EmitExpression(binary.Right);
-                    EmitComparisonOperator(binary.OperatorKind, binary.Left.Type);
-                    break;
                 case BoundBinaryExpression binary:
-                    EmitExpression(binary.Left);
-                    EmitExpression(binary.Right);
-                    EmitBinaryOperator(binary.OperatorKind, binary.Type);
+                    EmitBinaryExpression(binary);
                     break;
                 case BoundConversionExpression conversion:
                     EmitExpression(conversion.Operand);
@@ -1619,15 +1610,63 @@ public sealed class Emitter
         }
 
         /// <summary>
-        /// Short-circuit lowering (spec §8.3): the right operand is
-        /// evaluated only when the left one does not decide the result.
+        /// Emits a binary expression. A flat `a + b + … + z` is a left-deep
+        /// chain, so recursing into Left would cost one frame set per
+        /// operator and overflow the stack on long chains (issue #34). The
+        /// left spine is collected iteratively instead, the leftmost operand
+        /// is emitted, and each operator's tail follows from the innermost
+        /// out. Source scopes are entered and left in the exact order the
+        /// recursive walk would have used, so sequence points are unchanged.
         /// </summary>
-        private void EmitShortCircuit(BoundBinaryExpression binary)
+        private void EmitBinaryExpression(BoundBinaryExpression binary)
+        {
+            List<BoundBinaryExpression> spine = [binary];
+            while (spine[^1].Left is BoundBinaryExpression left)
+            {
+                EnterSourceScope(left.Span);
+                spine.Add(left);
+            }
+
+            EmitExpression(spine[^1].Left);
+            for (int i = spine.Count - 1; i >= 0; i--)
+            {
+                EmitBinaryTail(spine[i]);
+                if (i > 0)
+                {
+                    EnterSourceScope(spine[i - 1].Span);
+                }
+            }
+        }
+
+        /// <summary>Emits everything after the left operand is on the stack.</summary>
+        private void EmitBinaryTail(BoundBinaryExpression binary)
+        {
+            if (binary.OperatorKind is BoundBinaryOperatorKind.LogicalAnd or BoundBinaryOperatorKind.LogicalOr)
+            {
+                EmitShortCircuitTail(binary);
+            }
+            else if (binary.Type == ArithType.Bool)
+            {
+                EmitExpression(binary.Right);
+                EmitComparisonOperator(binary.OperatorKind, binary.Left.Type);
+            }
+            else
+            {
+                EmitExpression(binary.Right);
+                EmitBinaryOperator(binary.OperatorKind, binary.Type);
+            }
+        }
+
+        /// <summary>
+        /// Short-circuit lowering (spec §8.3), entered with the left operand
+        /// on the stack: the right operand is evaluated only when the left
+        /// one does not decide the result.
+        /// </summary>
+        private void EmitShortCircuitTail(BoundBinaryExpression binary)
         {
             bool isAnd = binary.OperatorKind == BoundBinaryOperatorKind.LogicalAnd;
             LabelHandle decided = _il.DefineLabel();
             LabelHandle end = _il.DefineLabel();
-            EmitExpression(binary.Left);
             _il.Branch(isAnd ? ILOpCode.Brfalse : ILOpCode.Brtrue, decided);
             Pop();
             EmitExpression(binary.Right);

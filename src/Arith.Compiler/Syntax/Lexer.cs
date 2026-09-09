@@ -16,15 +16,35 @@ public sealed class Lexer
     private readonly SourceText _text;
     private readonly DiagnosticBag _diagnostics;
     private readonly int _end;
+
+    /// <summary>
+    /// How many interpolation holes enclose the text being lexed. Scanning
+    /// a hole recurses (see <see cref="ScanHole"/>), so a hole past
+    /// <see cref="SyntaxFacts.MaxNestingDepth"/> is refused instead. The
+    /// whole-file lex starts at zero; the parser re-lexes each hole at its
+    /// own nesting depth, so a re-lex refuses exactly the literals whose
+    /// holes the parser could not have descended into (design §4.3).
+    /// </summary>
+    private readonly int _holeDepth;
+
     private int _position;
     private int _lineEnd = -1;
 
-    private Lexer(SourceText text, DiagnosticBag diagnostics, int start, int end)
+    /// <summary>
+    /// Set when this lexer gave up on an interpolated string because its
+    /// hole would nest too deeply. Read by the enclosing ScanHole, so the
+    /// outermost literal reports ARITH2005 rather than an unterminated
+    /// string.
+    /// </summary>
+    private bool _nestingTooDeep;
+
+    private Lexer(SourceText text, DiagnosticBag diagnostics, int start, int end, int holeDepth)
     {
         _text = text;
         _diagnostics = diagnostics;
         _position = start;
         _end = end;
+        _holeDepth = holeDepth;
     }
 
     public static ImmutableArray<Token> Lex(SourceText text, DiagnosticBag diagnostics) =>
@@ -34,11 +54,13 @@ public sealed class Lexer
     /// Lexes just the given range — used for the `${…}` holes of an
     /// interpolated string (design §7), so hole tokens and diagnostics keep
     /// their real source positions. The EndOfFile token sits at the range's
-    /// end.
+    /// end. <paramref name="holeDepth"/> is the nesting depth the range's
+    /// holes will be parsed at.
     /// </summary>
-    internal static ImmutableArray<Token> LexRange(SourceText text, TextSpan range, DiagnosticBag diagnostics)
+    internal static ImmutableArray<Token> LexRange(
+        SourceText text, TextSpan range, DiagnosticBag diagnostics, int holeDepth = 0)
     {
-        Lexer lexer = new(text, diagnostics, range.Start, range.End);
+        Lexer lexer = new(text, diagnostics, range.Start, range.End, holeDepth);
         ImmutableArray<Token>.Builder tokens = ImmutableArray.CreateBuilder<Token>();
         Token token;
         do
@@ -279,12 +301,42 @@ public sealed class Lexer
                     continue;
                 }
 
+                if (_holeDepth >= SyntaxFacts.MaxNestingDepth)
+                {
+                    // Scanning the hole would recurse past the nesting
+                    // limit. Its matching brace cannot be found without
+                    // scanning it, so the literal ends with the line, as an
+                    // unterminated one does; the token is Bad, so the parser
+                    // reports nothing more for it.
+                    _nestingTooDeep = true;
+                    _position = GetLineEnd();
+                    _diagnostics.Report(
+                        ErrorCodes.NestingTooDeep, TextSpan.FromBounds(start, _position),
+                        SyntaxFacts.MaxNestingDepth);
+                    hasError = true;
+                    break;
+                }
+
                 FlushRun(_position);
                 _position += 2; // ${
-                if (!ScanHole(out TextSpan holeSpan))
+                if (!ScanHole(out TextSpan holeSpan, out bool nestingTooDeep))
                 {
-                    _diagnostics.Report(
-                        ErrorCodes.UnterminatedStringLiteral, TextSpan.FromBounds(start, _position));
+                    if (nestingTooDeep)
+                    {
+                        // A literal nested inside this hole gave up (above);
+                        // the whole line went with it. Pass the verdict up
+                        // rather than blaming the missing quote.
+                        _nestingTooDeep = true;
+                        _diagnostics.Report(
+                            ErrorCodes.NestingTooDeep, TextSpan.FromBounds(start, _position),
+                            SyntaxFacts.MaxNestingDepth);
+                    }
+                    else
+                    {
+                        _diagnostics.Report(
+                            ErrorCodes.UnterminatedStringLiteral, TextSpan.FromBounds(start, _position));
+                    }
+
                     hasError = true;
                     break;
                 }
@@ -310,16 +362,18 @@ public sealed class Lexer
     /// scan correctly: a string, a block comment, or a nested interpolated
     /// string is one skipped unit, so a `}` or `"` inside it cannot end
     /// the hole early. False when the line (or range) ends first: the
-    /// hole, and with it the literal, is unterminated.
+    /// hole, and with it the literal, is unterminated — or, when
+    /// <paramref name="nestingTooDeep"/> is set, was abandoned by a nested
+    /// literal at the nesting limit.
     /// </summary>
-    private bool ScanHole(out TextSpan span)
+    private bool ScanHole(out TextSpan span, out bool nestingTooDeep)
     {
         int start = _position;
         int lineEnd = GetLineEnd();
         // Read only through the matching brace. LexRange materializes the
         // entire suffix before returning, which makes adjacent holes do
         // quadratic work. Share the known line end with nested scanners.
-        Lexer holeLexer = new(_text, new DiagnosticBag(), start, lineEnd) { _lineEnd = lineEnd };
+        Lexer holeLexer = new(_text, new DiagnosticBag(), start, lineEnd, _holeDepth + 1) { _lineEnd = lineEnd };
         int depth = 1;
         while (true)
         {
@@ -337,12 +391,14 @@ public sealed class Lexer
             {
                 span = TextSpan.FromBounds(start, token.Span.Start);
                 _position = token.Span.End;
+                nestingTooDeep = false;
                 return true;
             }
         }
 
         span = TextSpan.FromBounds(start, lineEnd);
         _position = lineEnd;
+        nestingTooDeep = holeLexer._nestingTooDeep;
         return false;
     }
 

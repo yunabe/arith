@@ -155,6 +155,30 @@ precedence-climbing keeps it compact). Notable spots:
   that starts a statement), then resume. This yields several useful errors per
   file without the complexity of full recovery. The design permits upgrading
   recovery later without touching the AST shape.
+- **Nesting limit** (`SyntaxFacts.MaxNestingDepth`, 256; ARITH2005): the
+  parser counts open statements and expressions — one level per statement,
+  precedence-climbing level, parenthesis, unary operand, call argument, array
+  element, interpolation hole, and `[` of an index chain — and refuses to go
+  deeper. Every recursive stage (this parser, the lexer's hole scanner, the
+  binder, pending-literal resolution, the emitter) recurses at most a few
+  frames per level, so the limit rather than the host's stack size decides
+  what compiles: an over-deep program gets one source-located diagnostic
+  instead of a process-killing stack overflow. Past the limit the parser
+  skips the rest of the enclosing expression, or the whole statement, with
+  bracket tracking, so the enclosing productions close normally and the
+  diagnostic is reported once per top-level statement. Interpolated strings
+  are re-lexed per hole at the parser's depth, so a re-lex refuses exactly
+  the nested literals whose holes the parser could not have descended into;
+  a literal past the limit cannot be delimited without scanning it, so it
+  runs to the end of its line like an unterminated one, and the re-lexed
+  hole around it becomes one Bad token. The number was chosen against the
+  deepest measured usage at the limit — about 0.7 MiB in a Debug build for
+  the worst shape — so the 1 MiB main thread of a Windows process and 1 MiB
+  worker threads keep a margin; a CLI test compiles every shape at the limit
+  under a 1 MiB `ulimit -s`. Flat operator chains are exempt: `a + b + … + z`
+  parses into a left-deep tree, and the binder, pending-literal resolution,
+  and the emitter each walk that left spine with an explicit list rather
+  than recursion, so their length is unbounded (issue #34).
 
 The parser always returns a complete tree (using error placeholder nodes where
 needed) so later stages need no null handling. Binding always runs, parse
