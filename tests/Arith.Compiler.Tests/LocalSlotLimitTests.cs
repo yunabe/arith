@@ -188,6 +188,25 @@ public sealed class LocalSlotLimitTests
     }
 
     [Fact]
+    public void EmitterWithoutABag_ThrowsInsteadOfReturningAnUnrunnableAssembly()
+    {
+        // The original Emitter.Emit overload stays for library consumers; it
+        // has nowhere to report ARITH4001, so it must throw rather than
+        // hand back images the runtime would reject.
+        Compilation fine = Compilation.Create(SyntaxTree.Parse(SourceText.From(Program(Limit))));
+        (ImmutableArray<byte> peImage, ImmutableArray<byte> pdbImage) =
+            Emitter.Emit(fine.Program, "locals", fine.SyntaxTree.Text);
+        IlVerification.AssertValid(peImage);
+        Assert.False(pdbImage.IsEmpty);
+
+        Compilation overflowing = Compilation.Create(SyntaxTree.Parse(SourceText.From(Program(Limit + 1))));
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => Emitter.Emit(overflowing.Program, "locals", overflowing.SyntaxTree.Text));
+        Assert.Contains(ErrorCodes.TooManyLocals.Code, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("'huge'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DebugMode_AppliesTheSameLimit()
     {
         string source = Program(Limit, "print(v0);");
