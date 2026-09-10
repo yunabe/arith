@@ -2,8 +2,9 @@ namespace Arith.Compiler.Diagnostics;
 
 /// <summary>
 /// The registry of every diagnostic the compiler can report. Codes are grouped
-/// by stage — ARITH1xxx lexical, ARITH2xxx syntactic, ARITH3xxx semantic — and
-/// stay stable once released.
+/// by stage — ARITH1xxx lexical, ARITH2xxx syntactic, ARITH3xxx semantic,
+/// ARITH4xxx target limits found during emission — and stay stable once
+/// released.
 /// </summary>
 public static class ErrorCodes
 {
@@ -123,4 +124,9 @@ public static class ErrorCodes
 
     public static readonly DiagnosticDescriptor EntryPointArgsMustBeAlone =
         new("ARITH3027", "'main' cannot combine a '[]string' parameter with other parameters");
+
+    // Target limits (ARITH4xxx): the program is valid Arith, but the .NET
+    // runtime could not run what the emitter would produce for it.
+    public static readonly DiagnosticDescriptor TooManyLocals =
+        new("ARITH4001", "function '{0}' needs {1} local variable slots (including compiler temporaries), but a .NET method can have at most {2}");
 }

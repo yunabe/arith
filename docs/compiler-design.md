@@ -75,7 +75,12 @@ placeholder nodes and resynchronizes, and the binder binds whatever it can —
 error tokens and error syntax bind to the `Error` type, which suppresses
 predictable cascade diagnostics. The only gate is emission: the `Compilation`
 facade skips emit when any *error*-severity diagnostic exists, so the emitter
-(and only the emitter) may assume a fully valid, well-typed bound tree.
+(and only the emitter) may assume a fully valid, well-typed bound tree. The
+emitter reports diagnostics of its own only for **target limits**
+(ARITH4xxx): a well-typed function can still need more than the 65,535 local
+slots a .NET method may declare, and `Emit` then fails like any other stage —
+checking every function first — rather than producing an assembly that throws
+`InvalidProgramException` when the method is called.
 
 The untyped AST and the bound tree are deliberately **two separate node
 hierarchies** (Roslyn-style) rather than one mutable AST annotated in place:
@@ -292,7 +297,12 @@ keeping its SRM approach. Structure:
    `InstructionEncoder` + `ControlFlowBuilder` labels:
    - Locals: each `LocalSymbol` gets a slot in the method's locals signature.
      Slots are assigned per function (no reuse across sibling scopes in v0.1 —
-     simpler, and the JIT does not care).
+     simpler, and the JIT does not care). Generated temporaries (loop
+     bookkeeping, `print` conversions) take slots from the same pool, and the
+     final count is checked against the runtime's per-method limit
+     (`Emitter.MaxLocalsPerMethod`, 65,535): neither the encoder nor ILVerify
+     rejects a larger signature, but the CLR refuses to run the method, so
+     the emitter reports ARITH4001 instead.
    - Control flow lowers directly to labels and branches: `if`/`else` and
      `while` (test at top, back-edge branch) are standard. `break`/`continue`
      branch to the innermost loop's exit/continue labels, tracked on a stack
@@ -401,7 +411,8 @@ SyntaxTree syntaxTree = SyntaxTree.Parse(sourceText);       // lex + parse only
 Compilation compilation = Compilation.Create(syntaxTree);   // bind
 EmitResult result = compilation.Emit(assemblyName);
 // Use compilation.Emit(assemblyName, debug: true) to preserve fault lines and frames.
-// EmitResult: Success, Diagnostics (all stages), PeImage and PdbImage when Success
+// EmitResult: Success, Diagnostics (all stages, emission's target-limit checks last),
+//             PeImage and PdbImage when Success
 ```
 
 `SyntaxTree.Parse` stops at syntax (as the name promises), `Compilation` owns

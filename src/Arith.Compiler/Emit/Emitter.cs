@@ -6,6 +6,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 
 using Arith.Compiler.Binding;
+using Arith.Compiler.Diagnostics;
 using Arith.Compiler.Text;
 
 namespace Arith.Compiler.Emit;
@@ -15,7 +16,9 @@ namespace Arith.Compiler.Emit;
 /// System.Reflection.Metadata, generalizing the techniques prototyped by the
 /// FibCommandEmitter experiment (docs/il-emission-notes.md). The emitter may
 /// only be handed an error-free program: every expression is concretely
-/// typed and value-returning functions are known to return.
+/// typed and value-returning functions are known to return. Its own
+/// diagnostics are limited to target limits (ARITH4xxx) that a well-typed
+/// program can still exceed, such as <see cref="MaxLocalsPerMethod"/>.
 ///
 /// Emission runs a layout pass first — MethodDef rows are assigned in
 /// declaration order before any body is written — so calls, including
@@ -31,10 +34,22 @@ public sealed class Emitter
 
     private static readonly Version FrameworkAssemblyVersion = new(10, 0, 0, 0);
 
+    /// <summary>
+    /// The most local variable slots one method may declare. The CLR rejects
+    /// a locals signature whose count does not fit in 16 bits when the method
+    /// is first called (<c>ConvToJitSig</c> throws
+    /// <c>InvalidProgramException</c>), and NativeAOT truncates it, so a
+    /// method past this limit compiles yet can never run. ECMA-335
+    /// §II.23.2.6 states the cap as 0xFFFE; the runtime accepts 0xFFFF.
+    /// Parameters are counted separately and do not consume local slots.
+    /// </summary>
+    public const int MaxLocalsPerMethod = ushort.MaxValue;
+
     private readonly MetadataBuilder _metadata = new();
     private readonly BlobBuilder _ilStream = new();
     private readonly MethodBodyStreamEncoder _bodyStream;
     private readonly PortablePdbEmitter _debug;
+    private readonly DiagnosticBag _diagnostics;
     private readonly bool _debugMode;
     private readonly Dictionary<FunctionSymbol, MethodDefinitionHandle> _methodHandles = [];
     private readonly Dictionary<ArithType, TypeReferenceHandle> _primitiveTypeRefs = [];
@@ -54,21 +69,29 @@ public sealed class Emitter
     private MemberReferenceHandle _textWriterWriteLine;
     private TypeReferenceHandle _objectType;
 
-    private Emitter(SourceText source, string assemblyName, bool debug)
+    private Emitter(SourceText source, string assemblyName, DiagnosticBag diagnostics, bool debug)
     {
         _bodyStream = new MethodBodyStreamEncoder(_ilStream);
         _debug = new PortablePdbEmitter(source, assemblyName);
+        _diagnostics = diagnostics;
         _debugMode = debug;
     }
 
-    /// <summary>Emits matching PE and Portable PDB images for an error-free bound program.</summary>
+    /// <summary>
+    /// Emits matching PE and Portable PDB images for an error-free bound
+    /// program. A function that exceeds a target limit is reported to
+    /// <paramref name="diagnostics"/> (ARITH4xxx) — every function is still
+    /// checked so each offender gets its own diagnostic — and both images
+    /// come back empty.
+    /// </summary>
     public static (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) Emit(
-        BoundProgram program, string assemblyName, SourceText source, bool debug = false)
+        BoundProgram program, string assemblyName, SourceText source, DiagnosticBag diagnostics, bool debug = false)
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentException.ThrowIfNullOrEmpty(assemblyName);
         ArgumentNullException.ThrowIfNull(source);
-        return new Emitter(source, assemblyName, debug).EmitProgram(program, assemblyName, debug);
+        ArgumentNullException.ThrowIfNull(diagnostics);
+        return new Emitter(source, assemblyName, diagnostics, debug).EmitProgram(program, assemblyName, debug);
     }
 
     private (ImmutableArray<byte> PeImage, ImmutableArray<byte> PdbImage) EmitProgram(
@@ -106,6 +129,13 @@ public sealed class Emitter
         for (int i = 0; i < program.Functions.Length; i++)
         {
             bodyOffsets[i] = EmitFunctionBody(program.Functions[i]);
+        }
+
+        if (_diagnostics.HasErrors)
+        {
+            // Some function exceeded a target limit. Its body was reported
+            // instead of written, so there is no assembly to finish.
+            return ([], []);
         }
 
         int parameterRow = 1;
@@ -542,6 +572,18 @@ public sealed class Emitter
         FunctionBodyEmitter body = new(this, il);
         body.Emit(function);
 
+        // Every slot the walk asked for is counted, `let`s and generated
+        // temporaries alike; the runtime's limit is checked here rather than
+        // trusted, because the encoder and ILVerify both accept a signature
+        // the CLR then refuses to run (issue #33).
+        if (body.LocalTypes.Count > MaxLocalsPerMethod)
+        {
+            _diagnostics.Report(
+                ErrorCodes.TooManyLocals, function.NameSpan ?? function.Span ?? default,
+                function.Symbol.Name, body.LocalTypes.Count, MaxLocalsPerMethod);
+            return 0;
+        }
+
         StandaloneSignatureHandle localSignature = default;
         if (body.LocalTypes.Count > 0)
         {
@@ -694,7 +736,12 @@ public sealed class Emitter
         private int _depth;
         private TextSpan? _sourceSpan;
 
-        /// <summary>The type of each local slot, in slot order (lets first-come, then print temps).</summary>
+        /// <summary>
+        /// The type of each local slot the body asked for, in slot order
+        /// (lets first-come, then loop and print temps). The count is not
+        /// capped: past <see cref="MaxLocalsPerMethod"/> it is what the
+        /// diagnostic reports, and the body itself is discarded.
+        /// </summary>
         public List<ArithType> LocalTypes { get; } = [];
 
         public int MaxStack { get; private set; }
@@ -1721,7 +1768,12 @@ public sealed class Emitter
         {
             int slot = LocalTypes.Count;
             LocalTypes.Add(type);
-            return slot;
+
+            // Past the limit the body is unusable and gets reported, not
+            // written. Keep walking so the total is known and every other
+            // function is still checked, but never hand the encoder an index
+            // its 16-bit ldloc/stloc operands cannot hold.
+            return slot < MaxLocalsPerMethod ? slot : 0;
         }
 
         private int GetPrintTemp(ArithType type)

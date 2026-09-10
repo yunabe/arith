@@ -64,7 +64,11 @@ public sealed class Binder
             BoundBlock body = BindFunctionBody(syntax, symbol);
             if (_functions.TryGetValue(symbol.Name, out FunctionSymbol? declared) && ReferenceEquals(declared, symbol))
             {
-                functions.Add(new BoundFunction(symbol, body) { Span = syntax.Span });
+                functions.Add(new BoundFunction(symbol, body)
+                {
+                    Span = syntax.Span,
+                    NameSpan = syntax.Identifier.Span,
+                });
             }
         }
 

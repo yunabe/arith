@@ -71,5 +71,16 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH3026 | `'for' cannot iterate over a value of type '{0}'` | `for x in e` where `e` is not an array (a range needs `..`/`..=`) |
 | ARITH3027 | `'main' cannot combine a '[]string' parameter with other parameters` | `main(args: []string, n: i64)` — the `[]string` form must be the only parameter |
 
+## Target limits (ARITH4xxx)
+
+Reported by the emitter for a program that is valid Arith but exceeds what
+the .NET runtime can run. Like every other error, these fail the compile —
+`arith build`/`arith run` print them and exit with `1` — instead of writing
+an assembly that throws `InvalidProgramException` when the method is called.
+
+| Code | Message | Reported when |
+| --- | --- | --- |
+| ARITH4001 | `function '{0}' needs {1} local variable slots (including compiler temporaries), but a .NET method can have at most {2}` | A function's `let` declarations plus the temporaries the compiler generates for it (`for` loop bookkeeping, repeat-array and element-assignment operands, numeric text conversions for `print`, `string(…)`, and interpolation) exceed the CLR's 65,535 local variables per method; parameters do not count |
+
 The registry itself is [`ErrorCodes.cs`](../src/Arith.Compiler/Diagnostics/ErrorCodes.cs);
 a test keeps this table and the registry in sync.
