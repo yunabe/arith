@@ -40,6 +40,9 @@ public static class ErrorCodes
     public static readonly DiagnosticDescriptor InvalidAssignmentTarget =
         new("ARITH2004", "the target of an assignment must be a variable or an array element");
 
+    public static readonly DiagnosticDescriptor NestingTooDeep =
+        new("ARITH2005", "nesting is too deep: the compiler supports at most {0} levels of nested expressions and statements");
+
     // Semantic errors (ARITH3xxx).
     public static readonly DiagnosticDescriptor DuplicateFunction =
         new("ARITH3001", "function '{0}' is already declared");

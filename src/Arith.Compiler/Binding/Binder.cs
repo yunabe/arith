@@ -674,9 +674,46 @@ public sealed class Binder
         return new BoundUnaryExpression(BoundUnaryOperatorKind.Negation, operand, operand.Type);
     }
 
+    /// <summary>
+    /// Binds a binary expression. A flat `a + b + … + z` parses left-deep
+    /// (spec §8.5), so recursing into the left operand would cost one frame
+    /// set per operator and overflow the stack on long chains (issue #34).
+    /// Instead the left spine is collected iteratively, the leftmost
+    /// operand is bound, and the operators are folded back up from the
+    /// innermost — right operands in source order, so diagnostics and
+    /// pending-literal resolution happen exactly as the recursive walk
+    /// would have done them.
+    /// </summary>
     private BoundExpression BindBinaryExpression(BinaryExpressionSyntax syntax, ArithType? expected)
     {
-        BoundBinaryOperatorKind kind = syntax.OperatorToken.Kind switch
+        List<(BinaryExpressionSyntax Syntax, BoundBinaryOperatorKind Kind, ArithType? OperandExpected)> spine = [];
+        ExpressionSyntax leftmost = syntax;
+        ArithType? operandExpected = expected;
+        while (leftmost is BinaryExpressionSyntax binary)
+        {
+            BoundBinaryOperatorKind kind = GetBinaryOperatorKind(binary.OperatorToken);
+
+            // An outer expected type applies to arithmetic operands only — a
+            // condition's bool expectation must not leak into the numeric
+            // sides of a comparison.
+            operandExpected = IsArithmetic(kind) ? operandExpected : null;
+            spine.Add((binary, kind, operandExpected));
+            leftmost = binary.Left;
+        }
+
+        BoundExpression left = BindExpression(leftmost, operandExpected);
+        for (int i = spine.Count - 1; i >= 0; i--)
+        {
+            (BinaryExpressionSyntax binary, BoundBinaryOperatorKind kind, operandExpected) = spine[i];
+            BoundExpression right = BindExpression(binary.Right, operandExpected);
+            left = BindBinaryOperands(binary, kind, left, right) with { Span = binary.Span };
+        }
+
+        return left;
+    }
+
+    private static BoundBinaryOperatorKind GetBinaryOperatorKind(Token operatorToken) =>
+        operatorToken.Kind switch
         {
             SyntaxKind.PlusToken => BoundBinaryOperatorKind.Addition,
             SyntaxKind.MinusToken => BoundBinaryOperatorKind.Subtraction,
@@ -691,16 +728,13 @@ public sealed class Binder
             SyntaxKind.BangEqualsToken => BoundBinaryOperatorKind.NotEquals,
             SyntaxKind.AmpersandAmpersandToken => BoundBinaryOperatorKind.LogicalAnd,
             SyntaxKind.PipePipeToken => BoundBinaryOperatorKind.LogicalOr,
-            _ => throw new UnreachableException($"unhandled binary operator {syntax.OperatorToken.Kind}"),
+            _ => throw new UnreachableException($"unhandled binary operator {operatorToken.Kind}"),
         };
 
-        // An outer expected type applies to arithmetic operands only — a
-        // condition's bool expectation must not leak into the numeric sides
-        // of a comparison.
-        ArithType? operandExpected = IsArithmetic(kind) ? expected : null;
-        BoundExpression left = BindExpression(syntax.Left, operandExpected);
-        BoundExpression right = BindExpression(syntax.Right, operandExpected);
-
+    /// <summary>Type-checks one operator application over its already-bound operands (spec §8).</summary>
+    private BoundExpression BindBinaryOperands(
+        BinaryExpressionSyntax syntax, BoundBinaryOperatorKind kind, BoundExpression left, BoundExpression right)
+    {
         // A void operand's primary problem is the missing value, not the
         // operator; report it at the operand, like every other value
         // context — and before the Error short-circuit, so an unrelated
@@ -1180,11 +1214,29 @@ public sealed class Binder
 
             case BoundBinaryExpression { Type.IsPending: true } binary:
             {
-                BoundExpression left = ResolvePending(binary.Left, target);
-                BoundExpression right = ResolvePending(binary.Right, target);
-                return left.Type.IsError || right.Type.IsError
-                    ? new BoundErrorExpression()
-                    : new BoundBinaryExpression(binary.OperatorKind, left, right, target);
+                // The same left-spine walk as BindBinaryExpression: a
+                // pending `1 + 1 + … + 1` is as left-deep as its syntax.
+                // Every operand of a pending operator is itself pending, so
+                // the spine ends at a pending literal or unary node.
+                List<BoundBinaryExpression> spine = [];
+                BoundExpression leftmost = binary;
+                while (leftmost is BoundBinaryExpression { Type.IsPending: true } pendingBinary)
+                {
+                    spine.Add(pendingBinary);
+                    leftmost = pendingBinary.Left;
+                }
+
+                BoundExpression left = ResolvePending(leftmost, target);
+                for (int i = spine.Count - 1; i >= 0; i--)
+                {
+                    BoundBinaryExpression node = spine[i];
+                    BoundExpression right = ResolvePending(node.Right, target);
+                    left = left.Type.IsError || right.Type.IsError
+                        ? new BoundErrorExpression { Span = node.Span }
+                        : new BoundBinaryExpression(node.OperatorKind, left, right, target) { Span = node.Span };
+                }
+
+                return left;
             }
 
             default:
