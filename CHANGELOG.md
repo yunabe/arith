@@ -29,6 +29,10 @@ All notable changes to Arith are recorded here. The format follows
 
 ### Fixed
 
+- Reject a string containing U+0000 in string-to-primitive conversions
+  (`i64("12\0")`, `bool("\0true\0")`) with the specified runtime error
+  instead of inheriting the .NET parsers' tolerance for NUL characters,
+  which spec §7's grammar does not allow.
 - Report `ARITH2005` ("nesting is too deep") instead of crashing the process
   with a stack overflow when expressions or statements nest more than 256
   levels deep — parentheses, unary operators, call arguments, array

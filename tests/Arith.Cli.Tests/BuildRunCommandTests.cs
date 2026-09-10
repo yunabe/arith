@@ -722,6 +722,14 @@ public sealed class BuildRunCommandTests : IDisposable
     [InlineData("print(f64(\"Infinity\"));", "System.FormatException")]
     [InlineData("print(f64(\"NaN\"));", "System.FormatException")]
     [InlineData("print(bool(\"yes\"));", "System.FormatException")]
+    // U+0000 is not white space (issue #35): the BCL parsers would accept
+    // a trailing NUL after a number and NULs around a bool.
+    [InlineData("print(i64(\"12\0\"));", "System.FormatException")]
+    [InlineData("print(i32(\"12\0\0\"));", "System.FormatException")]
+    [InlineData("print(f64(\"2.5\0\"));", "System.FormatException")]
+    [InlineData("print(f32(\"0.5\0\"));", "System.FormatException")]
+    [InlineData("print(bool(\"\0true\0\"));", "System.FormatException")]
+    [InlineData("print(bool(\"false\0\"));", "System.FormatException")]
     public void Run_InvalidStringConversion_FailsAtRuntime(string statement, string exceptionName)
     {
         string source = WriteSource("badparse.arith", $"fn main() {{ {statement} }}");

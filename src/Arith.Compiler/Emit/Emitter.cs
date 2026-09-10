@@ -64,6 +64,7 @@ public sealed class Emitter
     private MemberReferenceHandle _cultureGetInvariant;
     private MemberReferenceHandle _stringEquals;
     private MemberReferenceHandle _stringConcat;
+    private MemberReferenceHandle _stringContainsChar;
     private MemberReferenceHandle _booleanTryParse;
     private MemberReferenceHandle _consoleGetError;
     private MemberReferenceHandle _textWriterWriteLine;
@@ -292,6 +293,17 @@ public sealed class Emitter
                     p.AddParameter().Type().String();
                     p.AddParameter().Type().String();
                 }));
+
+        // String-to-primitive conversions reject U+0000 before parsing
+        // (spec §7); see EmitParseString.
+        _stringContainsChar = _metadata.AddMemberReference(
+            stringType,
+            _metadata.GetOrAddString("Contains"),
+            MethodSignature(
+                isInstanceMethod: true,
+                returnType: r => r.Type().Boolean(),
+                parameterCount: 1,
+                parameters: p => p.AddParameter().Type().Char()));
 
         TypeReferenceHandle booleanType = AddTypeReference(systemRuntime, "System", "Boolean");
         _primitiveTypeRefs[ArithType.Bool] = booleanType;
@@ -1526,14 +1538,30 @@ public sealed class Emitter
         /// <summary>
         /// Converts the string on the stack to a primitive (spec §7) with
         /// the invariant Parse; the exception it throws on bad input is the
-        /// specified runtime error. A float result is additionally checked
-        /// with IsFinite — .NET's Parse returns infinity for an overflowing
-        /// exponent and accepts the Infinity/NaN spellings — and a
-        /// FormatException is thrown explicitly (no exception-handling
-        /// regions are needed for a throw).
+        /// specified runtime error. Two inputs the BCL parsers accept are
+        /// outside the spec's grammar and are rejected with an explicit
+        /// FormatException (no exception-handling regions are needed for a
+        /// throw): a string containing U+0000 — the numeric parsers ignore
+        /// trailing NULs and Boolean.Parse trims them on both sides (issue
+        /// #35) — and a float result that is not finite, since Parse returns
+        /// infinity for an overflowing exponent and accepts the Infinity/NaN
+        /// spellings. Command-line arguments cannot carry a NUL, so the
+        /// entry-point bridge needs only the finiteness check.
         /// </summary>
         private void EmitParseString(ArithType to)
         {
+            LabelHandle noNul = _il.DefineLabel();
+            _il.OpCode(ILOpCode.Dup);
+            Push();
+            _il.LoadConstantI4('\0');
+            Push();
+            _il.Call(_emitter._stringContainsChar);
+            Pop(); // Two in (this, char), one out.
+            _il.Branch(ILOpCode.Brfalse, noNul);
+            Pop();
+            EmitThrowFormatException($"The string does not represent a {to} value: it contains a NUL character.");
+            _il.MarkLabel(noNul);
+
             if (to == ArithType.Bool)
             {
                 _il.Call(_emitter._booleanParse);
@@ -1555,15 +1583,24 @@ public sealed class Emitter
                 _il.Call(_emitter._isFinite[to]);
                 _il.Branch(ILOpCode.Brtrue, finite);
                 Pop();
-                _il.LoadString(_emitter._metadata.GetOrAddUserString(
-                    $"The string does not represent a finite {to} value."));
-                Push();
-                _il.OpCode(ILOpCode.Newobj);
-                _il.Token(_emitter._formatExceptionCtor);
-                _il.OpCode(ILOpCode.Throw);
-                Pop();
+                EmitThrowFormatException($"The string does not represent a finite {to} value.");
                 _il.MarkLabel(finite);
             }
+        }
+
+        /// <summary>
+        /// Throws a FormatException with <paramref name="message"/>. Whatever
+        /// else is on the stack is abandoned by the throw, so callers may
+        /// leave the value under test in place.
+        /// </summary>
+        private void EmitThrowFormatException(string message)
+        {
+            _il.LoadString(_emitter._metadata.GetOrAddUserString(message));
+            Push();
+            _il.OpCode(ILOpCode.Newobj);
+            _il.Token(_emitter._formatExceptionCtor);
+            _il.OpCode(ILOpCode.Throw);
+            Pop();
         }
 
         /// <summary>Spec §11: integer add/sub/mul are checked; div/rem fault at runtime on their own.</summary>
