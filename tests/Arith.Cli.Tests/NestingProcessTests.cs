@@ -112,6 +112,7 @@ public sealed class NestingProcessTests : IDisposable
     [InlineData("calls")]
     [InlineData("arrays")]
     [InlineData("index-chain")]
+    [InlineData("array-type")]
     [InlineData("if-statements")]
     [InlineData("else-if-chain")]
     [InlineData("interpolated-strings")]
@@ -126,6 +127,7 @@ public sealed class NestingProcessTests : IDisposable
             "calls" => $"print({Repeat("i64(", depth)}1{Repeat(")", depth)});",
             "arrays" => $"let a = {Repeat("[", depth)}1{Repeat("]", depth)}; print(1);",
             "index-chain" => $"let a = [1]; print(a{Repeat("[0]", depth)});",
+            "array-type" => $"let a: {Repeat("[]", depth)}i64 = [[1]]; print(len(a));",
             "if-statements" => $"{Repeat("if true {{ ", depth)}print(1);{Repeat(" }}", depth)}",
             "else-if-chain" => "let x = 5; if x == 0 { print(0); } "
                 + string.Join(" ", Enumerable.Range(1, depth).Select(i => $"else if x == {i} {{ print({i}); }}")),
@@ -161,8 +163,11 @@ public sealed class NestingProcessTests : IDisposable
         int depth = SyntaxFacts.MaxNestingDepth - 3; // Levels spent by `print(…);` around its argument.
         int wraps = depth - 1;                       // Each `[` is a level and its index another.
         int arms = SyntaxFacts.MaxNestingDepth - 4;  // An `else if` arm's print argument sits 4 levels below it.
+        int rank = depth - 1;                        // `deep(…)`'s argument literal is one level below print's.
         string source = WriteSource("deepest.arith", string.Join("\n",
             "fn id(x: i64) -> i64 { return x; }",
+            $"fn deep(x: {Repeat("[]", SyntaxFacts.MaxNestingDepth)}i64) -> i64 {{ return 7; }}",
+            $"fn rank(x: {Repeat("[]", rank)}i64) -> i64 {{ return 8; }}",
             "fn main() {",
             $"    print({Repeat("(", depth)}1{Repeat(")", depth)});",
             $"    print({Repeat("-", depth)}2);",
@@ -170,6 +175,7 @@ public sealed class NestingProcessTests : IDisposable
             $"    print({Repeat("f\"${", depth)}4{Repeat("}\"", depth)});",
             $"    let a = {Repeat("[", wraps)}5{Repeat("]", wraps)}; print(a{Repeat("[0]", wraps)});",
             $"    {Repeat("if true { ", depth)}print(6);{Repeat(" }", depth)}",
+            $"    print(rank({Repeat("[", rank)}0{Repeat("]", rank)}));",
             $"    let x = {arms}; if x == 0 {{ print(0); }} "
                 + string.Join(" ", Enumerable.Range(1, arms).Select(i => $"else if x == {i} {{ print({i}); }}")),
             "}",
@@ -179,6 +185,6 @@ public sealed class NestingProcessTests : IDisposable
 
         Assert.Equal("", result.Error);
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(["1", "-2", "3", "4", "5", "6", arms.ToString(System.Globalization.CultureInfo.InvariantCulture)], Lines(result.Output));
+        Assert.Equal(["1", "-2", "3", "4", "5", "6", "8", arms.ToString(System.Globalization.CultureInfo.InvariantCulture)], Lines(result.Output));
     }
 }

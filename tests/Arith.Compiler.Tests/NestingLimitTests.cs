@@ -355,6 +355,41 @@ public sealed class NestingLimitTests
             + string.Join(" ", Enumerable.Range(1, arms).Select(i => $"else if x == {i} {{ print({i}); }}"))));
     }
 
+    // ---- Array types: the emitter encodes element types recursively -------
+
+    [Fact]
+    public void ArrayType_AtTheLimit_CompilesAndEmits()
+    {
+        // A parameter type sits outside any statement, so all 256 levels
+        // are its own; a let's annotation is one level in.
+        CompileAndEmit(
+            $"fn deep(x: {Repeat("[]", Max)}i64) {{ }} fn main() {{ let a: {Repeat("[]", Max - 1)}i64 = []; }}");
+    }
+
+    [Fact]
+    public void ArrayType_PastTheLimit_ReportsOnceAndBindsAsAnErrorType()
+    {
+        string source = $"fn deep(x: {Repeat("[]", 5_000)}i64) {{ }} fn main() {{ deep([[1]]); }}";
+        Compilation compilation = Compile(source);
+
+        Diagnostic diagnostic = Assert.Single(compilation.Diagnostics);
+        Assert.Equal("ARITH2005", diagnostic.Code);
+        Assert.Equal("fn deep(x: ".Length + "[]".Length * Max, diagnostic.Span.Start);
+        Assert.Equal(
+            "(fn deep (param x ) (block)) (fn main (block (expr (call deep (array (array 1))))))",
+            SyntaxDumper.Dump(compilation.SyntaxTree.Root));
+    }
+
+    [Fact]
+    public void ArrayTypeAnnotation_PastTheLimit_ReportsOnce()
+    {
+        (string[] codes, string dump) = CompileScenario(
+            InMain($"let a: {Repeat("[]", 5_000)}i64 = [[1]]; print(len(a));"));
+
+        Assert.Equal(["ARITH2005"], codes);
+        Assert.Equal("(fn main (block (let a :  (array (array 1))) (expr (call print (call len a)))))", dump);
+    }
+
     // ---- Interpolated strings: the lexer's share of the limit -------------
 
     [Fact]

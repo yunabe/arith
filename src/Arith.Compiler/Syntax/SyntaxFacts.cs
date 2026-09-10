@@ -5,8 +5,9 @@ public static class SyntaxFacts
     /// <summary>
     /// The deepest nesting the front end accepts, counted by the parser as
     /// one level per open statement, per open expression (operand,
-    /// parenthesis, argument, element, interpolation hole), and per `[` of
-    /// an index chain. Every later stage recurses at most once per level,
+    /// parenthesis, argument, element, interpolation hole), per `[` of an
+    /// index chain, and per `[]` of an array type. Every later stage
+    /// recurses at most once per level,
     /// so this bound — not the host's stack size — decides what compiles;
     /// deeper source gets ARITH2005 (design §4.3). Left-associative chains
     /// such as `a + b + … + z` are walked iteratively and do not count.

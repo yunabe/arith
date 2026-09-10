@@ -158,9 +158,10 @@ precedence-climbing keeps it compact). Notable spots:
 - **Nesting limit** (`SyntaxFacts.MaxNestingDepth`, 256; ARITH2005): the
   parser counts open statements and expressions — one level per statement,
   precedence-climbing level, parenthesis, unary operand, call argument, array
-  element, interpolation hole, and `[` of an index chain — and refuses to go
-  deeper. Every recursive stage (this parser, the lexer's hole scanner, the
-  binder, pending-literal resolution, the emitter) recurses at most a few
+  element, interpolation hole, `[` of an index chain, and `[]` of an array
+  type — and refuses to go deeper. Every recursive stage (this parser, the
+  lexer's hole scanner, the binder, pending-literal resolution, the emitter's
+  expression walk and type encoding) recurses at most a few
   frames per level, so the limit rather than the host's stack size decides
   what compiles: an over-deep program gets one source-located diagnostic
   instead of a process-killing stack overflow. Past the limit the parser

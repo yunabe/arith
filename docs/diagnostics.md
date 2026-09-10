@@ -37,7 +37,7 @@ an unparsable one ([LANGUAGE_SPEC.md §5.1](../LANGUAGE_SPEC.md)).
 | ARITH2002 | `only a call expression can be used as a statement` | An expression other than a call appears as a statement (`1 + 2;`) |
 | ARITH2003 | `trailing comma is not allowed` | A parameter list, argument list, or array literal ends with `,` |
 | ARITH2004 | `the target of an assignment must be a variable or an array element` | The left side of `=` (or a compound operator) is not a name or an index expression (`f() = 1;`, `1 + 2 = 3;`) |
-| ARITH2005 | `nesting is too deep: the compiler supports at most {0} levels of nested expressions and statements` | Statements and expressions nest more than 256 levels deep — each statement, operand, parenthesis, argument, array element, interpolation hole, and index `[…]` is a level, and an `else if` nests one statement deeper. A left-associative chain such as `a + b + … + z` does not nest and has no limit. Reported once per statement at the first construct past the limit; the lexer reports it for an interpolated string whose holes alone nest that deep |
+| ARITH2005 | `nesting is too deep: the compiler supports at most {0} levels of nested expressions and statements` | Statements and expressions nest more than 256 levels deep — each statement, operand, parenthesis, argument, array element, interpolation hole, index `[…]`, and `[]` of an array type is a level, and an `else if` nests one statement deeper. A left-associative chain such as `a + b + … + z` does not nest and has no limit. Reported once per statement at the first construct past the limit; the lexer reports it for an interpolated string whose holes alone nest that deep |
 
 ## Semantic errors (ARITH3xxx)
 

@@ -32,8 +32,8 @@ All notable changes to Arith are recorded here. The format follows
 - Report `ARITH2005` ("nesting is too deep") instead of crashing the process
   with a stack overflow when expressions or statements nest more than 256
   levels deep — parentheses, unary operators, call arguments, array
-  literals, index chains, `if` bodies, `else if` chains, and nested
-  interpolated strings included. Flat operator chains such as
+  literals, index chains, array types, `if` bodies, `else if` chains, and
+  nested interpolated strings included. Flat operator chains such as
   `1 + 1 + … + 1` no longer count as nesting: the binder, pending-literal
   resolution, and the emitter walk them iteratively, so a 15,000-term sum
   compiles and prints `15000`.

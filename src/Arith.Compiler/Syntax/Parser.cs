@@ -28,8 +28,9 @@ public sealed class Parser
     private int _lastEnd;
 
     /// <summary>
-    /// How many statements, expressions, and index wraps are currently
-    /// open, capped at <see cref="SyntaxFacts.MaxNestingDepth"/>. The parser
+    /// How many statements, expressions, index wraps, and array-type
+    /// prefixes are currently open, capped at
+    /// <see cref="SyntaxFacts.MaxNestingDepth"/>. The parser
     /// recurses once per level (a precedence-climbing level, a parenthesis,
     /// a call argument, a body block, …), and so do the binder and emitter
     /// over the tree it builds, so bounding it here keeps every stage inside
@@ -155,6 +156,7 @@ public sealed class Parser
     private FunctionDeclarationSyntax ParseFunctionDeclaration()
     {
         int start = Current.Span.Start;
+        _nestingTooDeepReported = false; // Parameter and return types are outside any statement.
         MatchToken(SyntaxKind.FnKeyword);
         Token identifier = MatchToken(SyntaxKind.IdentifierToken);
         MatchToken(SyntaxKind.OpenParenToken);
@@ -210,6 +212,29 @@ public sealed class Parser
         while (Current.Kind == SyntaxKind.OpenBracketToken
             && Peek(1).Kind == SyntaxKind.CloseBracketToken)
         {
+            // Each `[]` wraps the type once more, and the emitter encodes
+            // element types recursively, so the prefixes count toward the
+            // nesting limit. Past it the whole type is skipped and stands
+            // as an error type — a missing keyword binds to Error, which
+            // suppresses cascades — so the declaration parses on.
+            if (_nestingDepth + arrayDepth >= SyntaxFacts.MaxNestingDepth)
+            {
+                ReportNestingTooDeep(Current.Span);
+                while (Current.Kind == SyntaxKind.OpenBracketToken
+                    && Peek(1).Kind == SyntaxKind.CloseBracketToken)
+                {
+                    Consume();
+                    Consume();
+                }
+
+                if (SyntaxFacts.IsTypeKeyword(Current.Kind))
+                {
+                    Consume();
+                }
+
+                return new TypeSyntax(MissingToken(SyntaxKind.BadToken), 0, SpanFrom(start));
+            }
+
             Consume();
             Consume();
             arrayDepth++;
