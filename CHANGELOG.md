@@ -8,6 +8,11 @@ All notable changes to Arith are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-16
+
+Debugging support, generated-IL verification, and reliability fixes for the
+.NET compiler. The language remains at version 0.2.
+
 ### Added
 
 - Verify generated IL during ordinary tests using the official ILVerify
@@ -143,6 +148,7 @@ The first complete implementation of language version 0.1.
   test, including a measured tail-call experiment.
 - CI on Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/yunabe/arith/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/yunabe/arith/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/yunabe/arith/releases/tag/v0.2.1
 [0.2.0]: https://github.com/yunabe/arith/releases/tag/v0.2.0
 [0.1.0]: https://github.com/yunabe/arith/releases/tag/v0.1.0

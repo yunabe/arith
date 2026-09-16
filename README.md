@@ -203,7 +203,7 @@ needed. See the [verification notes](docs/il-emission-notes.md#9-verifying-gener
 The `version` command prints the CLI version:
 
 ```text
-0.2.0
+0.2.1
 ```
 
 The repository is laid out as follows:
